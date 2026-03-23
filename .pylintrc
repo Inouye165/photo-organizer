@@ -1,0 +1,5 @@
+[MASTER]
+ignore-paths=^server/alembic/.*$
+
+[FORMAT]
+max-line-length=100

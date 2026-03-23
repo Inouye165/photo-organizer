@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,9 +23,10 @@ class Settings(BaseSettings):
     app_name: str = "Photo Organizer"
     api_prefix: str = "/api"
     database_url: str = Field(
-        default="postgresql+psycopg://photoorganizer:photoorganizer@localhost:5432/photoorganizer"
+        default="postgresql+psycopg://photoorganizer:photoorganizer@localhost:5434/photoorganizer"
     )
     scan_roots: list[Path] = Field(default_factory=list)
+    scan_max_photos: int = 10
     generated_media_root: Path = Field(default=Path("./generated-media"))
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     thumbnail_size: int = 360
@@ -65,11 +66,15 @@ class Settings(BaseSettings):
 
     def resolved_scan_roots(self) -> list[Path]:
         """Return configured scan roots as absolute paths."""
-        return [root.expanduser().resolve() for root in self.scan_roots]
+        self_any = cast(Any, self)
+        configured_roots = list(cast(list[Any], self_any.scan_roots))
+        return [Path(str(root)).expanduser().resolve() for root in configured_roots]
 
     def resolved_media_root(self) -> Path:
         """Return the generated media root as an absolute path."""
-        return self.generated_media_root.expanduser().resolve()
+        self_any = cast(Any, self)
+        media_root = cast(Path, self_any.generated_media_root)
+        return Path(str(media_root)).expanduser().resolve()
 
 
 @lru_cache

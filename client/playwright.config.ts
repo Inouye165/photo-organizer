@@ -18,14 +18,16 @@ export default defineConfig({
     {
       command: `"${pythonExecutable}" scripts/start_e2e_server.py`,
       cwd: serverRoot,
-      url: "http://127.0.0.1:8000/health",
-      reuseExistingServer: true,
+      url: "http://127.0.0.1:8001/health",
+      reuseExistingServer: false,
       timeout: 120000,
       env: {
         PHOTO_ORGANIZER_DATABASE_URL: "sqlite:///./.tmp/e2e.db",
         PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT: "./.tmp/e2e-media",
         PHOTO_ORGANIZER_SCAN_ROOTS: JSON.stringify([fixtureRoot]),
         PHOTO_ORGANIZER_CORS_ORIGINS: JSON.stringify(["http://127.0.0.1:4173"]),
+        PHOTO_ORGANIZER_PREPARE_DEMO_SCAN_ROOT: "1",
+        PHOTO_ORGANIZER_PORT: "8001",
         PHOTO_ORGANIZER_RESET_STATE: "1",
       },
     },
@@ -36,7 +38,7 @@ export default defineConfig({
       reuseExistingServer: true,
       timeout: 120000,
       env: {
-        VITE_API_BASE_URL: "http://127.0.0.1:8000",
+        VITE_API_BASE_URL: "http://127.0.0.1:8001",
       },
     },
   ],

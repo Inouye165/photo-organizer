@@ -6,10 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
 from sqlalchemy.orm import Session
 
 from app.models.photo import Photo
 from app.models.photo_variant import PhotoVariant
+
+register_heif_opener()
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,14 @@
+{
+  "name": "photo-organizer-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start:local": "node scripts/start-local.mjs",
+    "lint": "powershell -NoProfile -Command \"Push-Location server; ..\\.venv\\Scripts\\python.exe -m ruff check app tests; Pop-Location; Push-Location client; npm run lint; Pop-Location\"",
+    "test": "powershell -NoProfile -Command \"Push-Location server; ..\\.venv\\Scripts\\python.exe -m pytest -q; Pop-Location; Push-Location client; npm run test; Pop-Location\"",
+    "typecheck": "powershell -NoProfile -Command \"Push-Location client; npm run typecheck; Pop-Location\"",
+    "build": "powershell -NoProfile -Command \"Push-Location client; npm run build; Pop-Location\"",
+    "test:e2e": "powershell -NoProfile -Command \"Push-Location client; npm run playwright:test; Pop-Location\""
+  }
+}

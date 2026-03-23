@@ -1,9 +1,15 @@
 """Initial schema for photos, variants, and scan runs."""
 
+# pylint: disable=invalid-name
+
 from __future__ import annotations
 
-from alembic import op
+from importlib import import_module
+from typing import Any
+
 import sqlalchemy as sa
+
+operations: Any = import_module("alembic.op")
 
 revision = "20260323_0001"
 down_revision = None
@@ -13,7 +19,7 @@ depends_on = None
 
 def upgrade() -> None:
     """Create the initial application schema."""
-    op.create_table(
+    operations.create_table(
         "photos",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("original_path", sa.Text(), nullable=False),
@@ -27,14 +33,24 @@ def upgrade() -> None:
         sa.Column("file_modified_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("file_created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("content_hash", sa.String(length=128), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("original_path"),
     )
-    op.create_index("ix_photos_captured_at", "photos", ["captured_at"], unique=False)
+    operations.create_index("ix_photos_captured_at", "photos", ["captured_at"], unique=False)
 
-    op.create_table(
+    operations.create_table(
         "scan_runs",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(length=64), nullable=False),
@@ -48,7 +64,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
 
-    op.create_table(
+    operations.create_table(
         "photo_variants",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("photo_id", sa.Integer(), nullable=False),
@@ -58,7 +74,12 @@ def upgrade() -> None:
         sa.Column("height", sa.Integer(), nullable=False),
         sa.Column("mime_type", sa.String(length=255), nullable=False),
         sa.Column("file_size_bytes", sa.BigInteger(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["photo_id"], ["photos.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("photo_id", "kind", name="uq_photo_variant_kind"),
@@ -67,7 +88,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Drop the initial application schema."""
-    op.drop_table("photo_variants")
-    op.drop_table("scan_runs")
-    op.drop_index("ix_photos_captured_at", table_name="photos")
-    op.drop_table("photos")
+    operations.drop_table("photo_variants")
+    operations.drop_table("scan_runs")
+    operations.drop_index("ix_photos_captured_at", table_name="photos")
+    operations.drop_table("photos")

@@ -1,3 +1,26 @@
+export type ScanError = {
+  id: number;
+  scan_run_id: number;
+  file_path: string;
+  file_name: string;
+  error_type: string;
+  reason: string;
+  created_at: string;
+};
+
+export type ScanErrorListResponse = {
+  items: ScanError[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type ScanErrorListParams = {
+  scan_run_id?: number;
+  page?: number;
+  page_size?: number;
+};
+
 export type ScanRun = {
   id: number;
   status: string;
@@ -116,4 +139,15 @@ export async function getPhotos(params: PhotoListParams) {
 export async function getPhoto(photoId: number) {
   const response = await fetch(toApiUrl(`/api/photos/${photoId}`));
   return readJson<PhotoDetail>(response);
+}
+
+export async function getScanErrors(params: ScanErrorListParams) {
+  const url = new URL(toApiUrl("/api/scan-errors"));
+  url.searchParams.set("page", String(params.page ?? 1));
+  url.searchParams.set("page_size", String(params.page_size ?? 50));
+  if (params.scan_run_id != null) {
+    url.searchParams.set("scan_run_id", String(params.scan_run_id));
+  }
+  const response = await fetch(url);
+  return readJson<ScanErrorListResponse>(response);
 }

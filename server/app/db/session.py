@@ -16,10 +16,11 @@ from app.core.config import get_settings
 def get_engine() -> Engine:
     """Create and cache the SQLAlchemy engine."""
     settings = get_settings()
+    database_url: str = str(settings.model_dump().get("database_url", ""))
     connect_args = (
-        {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+        {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     )
-    return create_engine(settings.database_url, future=True, connect_args=connect_args)
+    return create_engine(database_url, future=True, connect_args=connect_args)
 
 
 @lru_cache

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Images, ScanSearch } from "lucide-react";
-import { useSearchParams } from "react-router-dom";
+import { AlertCircle, FileWarning, Images, ScanSearch } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { AppShell } from "@/components/app-shell";
 import { DateRangeFilter } from "@/components/date-range-filter";
@@ -104,6 +104,27 @@ export function DashboardPage() {
             <div className="flex items-center gap-2 rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700">
               <AlertCircle size={16} />
               <span>{scanErrorMessage}</span>
+            </div>
+          ) : null}
+          {latestScan && latestScan.errors_count > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                className="inline-flex items-center gap-1.5 rounded-2xl bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 transition hover:bg-amber-100"
+                to={`/rejected?scanRunId=${latestScan.id}`}
+              >
+                <FileWarning size={14} />
+                {latestScan.errors_count} file{latestScan.errors_count > 1 ? "s" : ""} rejected or failed
+              </Link>
+              {latestScan.notes ? (
+                <details className="w-full text-sm text-black/55">
+                  <summary className="cursor-pointer select-none text-xs">
+                    Show error details
+                  </summary>
+                  <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-xl bg-black/5 p-3 text-xs">
+                    {latestScan.notes}
+                  </pre>
+                </details>
+              ) : null}
             </div>
           ) : null}
         </div>
