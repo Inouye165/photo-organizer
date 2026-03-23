@@ -75,6 +75,13 @@ VITE_API_BASE_URL=http://localhost:8000
 docker compose -f infra/docker-compose.yml up -d
 ```
 
+For local PostgreSQL verification, one of these must already be available:
+
+- a running Docker engine capable of starting the Compose service in `infra/docker-compose.yml`
+- a separate local PostgreSQL instance, with `PHOTO_ORGANIZER_DATABASE_URL` pointed at it
+
+If neither is available, the app can still be run locally against SQLite for development and UI verification.
+
 ## Run the Backend
 
 Install dependencies into the project virtual environment:
@@ -165,6 +172,7 @@ Pop-Location
 - The scan is synchronous. Large libraries will block the request until completion.
 - Existing originals are indexed by `original_path` and updated in place.
 - Variants are generated on demand during scan execution and persisted on disk.
+- `photo_variants.kind` is constrained to the supported Phase 1 values: `thumbnail` and `display_webp`.
 - Metadata extraction prefers EXIF capture time and falls back to the file modified time.
 
 ## Recommended Next Steps for Phase 2

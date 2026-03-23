@@ -1,6 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -51,6 +50,32 @@ afterEach(() => {
 });
 
 describe("DashboardPage", () => {
+  it("renders the compact product header copy", async () => {
+    mockedApi.getLatestScanRun.mockResolvedValue({ scan_run: null });
+    mockedApi.getPhotos.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 });
+    mockedApi.getPhoto.mockRejectedValue(new Error("No detail"));
+
+    renderDashboard();
+
+    expect(await screen.findByText("Photo Organizer")).toBeInTheDocument();
+    expect(
+      screen.getByText("Scan selected folders, index your photos, and browse them by date."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the main controls row", async () => {
+    mockedApi.getLatestScanRun.mockResolvedValue({ scan_run: null });
+    mockedApi.getPhotos.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 });
+    mockedApi.getPhoto.mockRejectedValue(new Error("No detail"));
+
+    renderDashboard();
+
+    expect(await screen.findByTestId("controls-row")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run scan" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Date from")).toBeInTheDocument();
+    expect(screen.getByLabelText("Date to")).toBeInTheDocument();
+  });
+
   it("renders a loading state while gallery data is pending", () => {
     mockedApi.getLatestScanRun.mockReturnValue(new Promise(() => undefined));
     mockedApi.getPhotos.mockReturnValue(new Promise(() => undefined));
@@ -76,7 +101,7 @@ describe("DashboardPage", () => {
 
     renderDashboard();
 
-    expect(screen.getByText("Loading your real library...")).toBeInTheDocument();
+    expect(screen.getByText("Loading photos...")).toBeInTheDocument();
   });
 
   it("renders an empty state when the backend returns no photos", async () => {
@@ -147,7 +172,7 @@ describe("DashboardPage", () => {
     renderDashboard();
 
     expect(await screen.findByText("beach.jpg")).toBeInTheDocument();
-    expect(screen.getByText("Real indexed photos")).toBeInTheDocument();
+    expect(screen.getByText("Photos")).toBeInTheDocument();
   });
 
   it("submits selected dates through the filter contract", async () => {

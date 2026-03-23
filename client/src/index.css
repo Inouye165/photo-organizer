@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+  height: 100%;
+}
+
 :root {
   color: #1c1f21;
   background: #fefbf7;
@@ -20,6 +24,18 @@ body {
 
 #root {
   min-height: 100vh;
+}
+
+@media (min-width: 1024px) {
+  body {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100vh;
+    overflow: hidden;
+  }
 }
 
 * {

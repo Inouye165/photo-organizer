@@ -5,7 +5,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -18,7 +27,13 @@ class PhotoVariant(Base):
     """Represents a generated derivative file for an indexed photo."""
 
     __tablename__ = "photo_variants"
-    __table_args__ = (UniqueConstraint("photo_id", "kind", name="uq_photo_variant_kind"),)
+    __table_args__ = (
+        UniqueConstraint("photo_id", "kind", name="uq_photo_variant_kind"),
+        CheckConstraint(
+            "kind IN ('thumbnail', 'display_webp')",
+            name="ck_photo_variants_kind",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     photo_id: Mapped[int] = mapped_column(

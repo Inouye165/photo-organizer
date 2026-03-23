@@ -2,22 +2,19 @@ import type { PropsWithChildren } from "react";
 
 export function AppShell({ children }: PropsWithChildren) {
   return (
-    <div className="min-h-screen">
-      <header className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 pb-8 pt-8 sm:px-6 lg:px-8 lg:pt-12">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="text-sm font-semibold uppercase tracking-[0.28em] text-moss">Phase 1</p>
-            <h1 className="font-serif text-4xl leading-tight text-ink sm:text-5xl">
-              A real gallery built from your disk, your database, and real generated media.
-            </h1>
-          </div>
-          <p className="max-w-xl text-sm leading-6 text-black/65 sm:text-base">
-            Scan configured roots, index originals, generate derivatives, and browse the resulting
-            library without placeholder data.
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden">
+      <header className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-4 pb-3 pt-4 sm:px-6 lg:px-8 lg:pb-4 lg:pt-5">
+        <div className="min-w-0">
+          <h1 className="font-serif text-2xl leading-none text-ink sm:text-3xl">Photo Organizer</h1>
+          <p className="mt-1 text-sm text-black/60 sm:text-[15px]">
+            Scan selected folders, index your photos, and browse them by date.
           </p>
         </div>
+        <div className="hidden rounded-full border border-black/10 bg-white/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-black/45 lg:block">
+          Phase 1
+        </div>
       </header>
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 pb-12 sm:px-6 lg:px-8">
+      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-3 px-4 pb-4 sm:px-6 lg:min-h-0 lg:px-8 lg:pb-5">
         {children}
       </main>
     </div>

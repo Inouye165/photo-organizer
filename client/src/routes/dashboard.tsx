@@ -73,11 +73,11 @@ export function DashboardPage() {
 
   return (
     <AppShell>
-      <section className="grid gap-4 xl:grid-cols-[1.5fr_1fr_1fr]">
+      <section className="grid gap-3 lg:grid-cols-[1.6fr_0.75fr_0.75fr]" data-testid="status-row">
         <ScanStatusCard isRunning={scanMutation.isPending} scanRun={latestScan} />
         <MetricCard
           eyebrow="Library"
-          hint="Real records from the API"
+          hint="Indexed photos"
           testId="total-photos-card"
           title="Total photos"
           value={String(totalPhotos)}
@@ -91,15 +91,14 @@ export function DashboardPage() {
         />
       </section>
 
-      <Card className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.24em] text-black/45">
+      <Card className="flex flex-col gap-3 bg-white/72 lg:flex-row lg:items-center lg:justify-between" data-testid="controls-row">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-black/45">
             <ScanSearch size={16} />
-            Scan roots
+            Scan library
           </div>
-          <p className="max-w-2xl text-sm leading-6 text-black/60">
-            Trigger a synchronous scan across configured roots. Every tile on this page comes from
-            the latest backend response and persisted records.
+          <p className="max-w-2xl text-sm leading-5 text-black/60">
+            Scan your selected folders to refresh the gallery with newly indexed photos.
           </p>
           {scanErrorMessage ? (
             <div className="flex items-center gap-2 rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -108,7 +107,7 @@ export function DashboardPage() {
             </div>
           ) : null}
         </div>
-        <Button className="h-12 min-w-40" disabled={scanMutation.isPending} onClick={() => scanMutation.mutate()}>
+        <Button className="h-10 min-w-36" disabled={scanMutation.isPending} onClick={() => scanMutation.mutate()}>
           {scanMutation.isPending ? "Scanning..." : "Run scan"}
         </Button>
       </Card>
@@ -140,29 +139,32 @@ export function DashboardPage() {
         }}
       />
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between gap-4">
+      <Card className="flex flex-1 flex-col overflow-hidden bg-[#fffdf9]/88 lg:min-h-0">
+        <div className="flex items-center justify-between gap-4 border-b border-black/8 pb-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-black/45">Gallery</p>
-            <h2 className="mt-2 flex items-center gap-2 text-3xl font-semibold text-ink">
-              <Images size={24} />
-              Real indexed photos
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-black/45">Gallery</p>
+            <h2 className="mt-1 flex items-center gap-2 text-xl font-semibold text-ink">
+              <Images size={18} />
+              Photos
             </h2>
           </div>
+          <p className="rounded-full bg-black/5 px-3 py-1 text-sm text-black/55">{filteredCount} visible</p>
         </div>
-        <GalleryGrid
-          errorMessage={galleryErrorMessage}
-          isError={galleryQuery.isError}
-          isLoading={galleryQuery.isLoading}
-          onRetry={() => void galleryQuery.refetch()}
-          onSelectPhoto={(photoId) => {
-            const next = new URLSearchParams(searchParams);
-            next.set("photoId", String(photoId));
-            setSearchParams(next);
-          }}
-          photos={galleryQuery.data?.items ?? []}
-        />
-      </section>
+        <div className="mt-3 flex-1 overflow-y-auto pr-1" data-testid="gallery-scroll-region">
+          <GalleryGrid
+            errorMessage={galleryErrorMessage}
+            isError={galleryQuery.isError}
+            isLoading={galleryQuery.isLoading}
+            onRetry={() => void galleryQuery.refetch()}
+            onSelectPhoto={(photoId) => {
+              const next = new URLSearchParams(searchParams);
+              next.set("photoId", String(photoId));
+              setSearchParams(next);
+            }}
+            photos={galleryQuery.data?.items ?? []}
+          />
+        </div>
+      </Card>
 
       <PhotoDetailPanel
         isOpen={Boolean(selectedPhotoId)}

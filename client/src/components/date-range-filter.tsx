@@ -26,13 +26,13 @@ export function DateRangeFilter({
   }, [initialDateFrom, initialDateTo]);
 
   return (
-    <Card className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-black/45">Filter window</p>
-        <h2 className="mt-2 text-2xl font-semibold text-ink">Focus the gallery by capture date</h2>
+    <Card className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="pr-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-black/45">Browse by date</p>
+        <h2 className="mt-1 text-lg font-semibold text-ink">Filter the current gallery view</h2>
       </div>
       <form
-        className="grid gap-3 sm:grid-cols-[minmax(0,220px)_minmax(0,220px)_auto_auto]"
+        className="grid gap-2 sm:grid-cols-[minmax(0,180px)_minmax(0,180px)_auto_auto]"
         onSubmit={(event) => {
           event.preventDefault();
           onApply({ dateFrom, dateTo });
@@ -46,11 +46,11 @@ export function DateRangeFilter({
           <span>To</span>
           <Input aria-label="Date to" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
         </label>
-        <Button className="h-11" type="submit">
+        <Button className="h-10" type="submit">
           Apply filters
         </Button>
         <Button
-          className="h-11"
+          className="h-10"
           type="button"
           variant="secondary"
           onClick={() => {
