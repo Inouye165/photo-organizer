@@ -5,6 +5,7 @@ export type ScanError = {
   file_name: string;
   error_type: string;
   reason: string;
+  diagnostic_metadata: Record<string, unknown> | null;
   created_at: string;
 };
 
@@ -84,6 +85,7 @@ export type PhotoListParams = {
   page_size?: number;
   date_from?: string;
   date_to?: string;
+  scan_run_id?: number;
 };
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -131,6 +133,9 @@ export async function getPhotos(params: PhotoListParams) {
   }
   if (params.date_to) {
     url.searchParams.set("date_to", params.date_to);
+  }
+  if (params.scan_run_id != null) {
+    url.searchParams.set("scan_run_id", String(params.scan_run_id));
   }
   const response = await fetch(url);
   return readJson<PhotoListResponse>(response);

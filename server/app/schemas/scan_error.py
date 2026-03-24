@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,6 +19,7 @@ class ScanErrorRead(BaseModel):
     file_name: str
     error_type: str
     reason: str
+    diagnostic_metadata: dict[str, Any] | None
     created_at: datetime
 
 

@@ -66,3 +66,4 @@ class PhotoListQuery(BaseModel):
     page_size: int = Field(default=24, ge=1, le=200)
     date_from: date | None = None
     date_to: date | None = None
+    scan_run_id: int | None = Field(default=None, ge=1)
