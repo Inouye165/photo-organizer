@@ -9,3 +9,4 @@ def import_models() -> None:
     import_module("app.models.photo_variant")
     import_module("app.models.scan_run")
     import_module("app.models.scan_error")
+    import_module("app.models.scan_run_photo")

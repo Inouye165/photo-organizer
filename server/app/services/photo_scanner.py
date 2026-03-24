@@ -9,6 +9,7 @@ import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -21,6 +22,7 @@ from app.core.config import Settings
 from app.models.photo import Photo
 from app.models.scan_error import ScanError
 from app.models.scan_run import ScanRun
+from app.models.scan_run_photo import ScanRunPhoto
 from app.services.media_variants import VariantService
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,13 @@ MIN_PHOTO_EDGE = 160
 MAX_ANALYSIS_PIXELS = 60_000
 MIN_COLOR_VARIANCE = 900.0
 MIN_UNIQUE_COLOR_RATIO = 0.12
+RGB_CHANNEL_COUNT = 3
+RECOVERABLE_SCAN_EXCEPTIONS = (
+    OSError,
+    RuntimeError,
+    UnidentifiedImageError,
+    ValueError,
+)
 
 
 @dataclass(frozen=True)
@@ -68,6 +77,7 @@ class PhotoFilters:
 
     date_from: date | None = None
     date_to: date | None = None
+    scan_run_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +86,17 @@ class RejectionResult:
 
     error_type: str
     reason: str
+
+
+@dataclass(frozen=True)
+class ScanErrorDetails:
+    """Captures the persisted fields for one scan error entry."""
+
+    file_path: str
+    file_name: str
+    error_type: str
+    reason: str
+    diagnostic_metadata: dict[str, Any] | None = None
 
 
 def is_supported_file(file_path: Path) -> bool:
@@ -106,6 +127,21 @@ def build_date_range(filters: PhotoFilters) -> tuple[datetime | None, datetime |
         else None
     )
     return start, end
+
+
+def apply_photo_filters(query: Any, filters: PhotoFilters) -> Any:
+    """Apply photo list filters to a SQLAlchemy select query."""
+    if filters.scan_run_id is not None:
+        query = query.join(ScanRunPhoto, ScanRunPhoto.photo_id == Photo.id).where(
+            ScanRunPhoto.scan_run_id == filters.scan_run_id
+        )
+
+    start, end = build_date_range(filters)
+    if start is not None:
+        query = query.where(Photo.captured_at >= start)
+    if end is not None:
+        query = query.where(Photo.captured_at <= end)
+    return query
 
 
 def extract_captured_at(image: Image.Image, fallback: datetime) -> datetime:
@@ -148,21 +184,34 @@ def validate_photo(image: Image.Image) -> RejectionResult | None:
 
     normalized_image = ImageOps.exif_transpose(image)
     width, height = normalized_image.size
+    size_rejection = _validate_dimensions(width=width, height=height)
+    if size_rejection is not None:
+        return size_rejection
+
+    if has_photographic_exif(normalized_image):
+        return None
+
+    return _validate_pixel_distribution(normalized_image)
+
+
+def _validate_dimensions(width: int, height: int) -> RejectionResult | None:
+    """Reject images smaller than the minimum supported photo edge."""
     if min(width, height) < MIN_PHOTO_EDGE:
         return RejectionResult(
             "rejected",
             f"Too small ({width}x{height}px, minimum edge is {MIN_PHOTO_EDGE}px)",
         )
+    return None
 
-    if has_photographic_exif(normalized_image):
-        return None
 
-    analysis_image = normalized_image.convert("RGB")
+def _validate_pixel_distribution(image: Image.Image) -> RejectionResult | None:
+    """Reject non-photographic images based on pixel distribution heuristics."""
+    analysis_image = image.convert("RGB")
     pixel_array = np.asarray(analysis_image, dtype=np.uint8)
-    if pixel_array.ndim != 3:
+    if pixel_array.ndim != RGB_CHANNEL_COUNT:
         return RejectionResult("rejected", "Non-RGB image data")
 
-    flat_pixels = pixel_array.reshape(-1, 3)
+    flat_pixels = pixel_array.reshape(-1, RGB_CHANNEL_COUNT)
     if flat_pixels.size == 0:
         return RejectionResult("rejected", "Empty image data")
 
@@ -210,7 +259,6 @@ class PhotoScannerService:
     def scan(self, session: Session) -> ScanRun:
         """Run a synchronous filesystem scan across the configured roots."""
         roots = self.settings.resolved_scan_roots()
-        max_photos = self.settings.scan_max_photos
         self.variant_service.media_root.mkdir(parents=True, exist_ok=True)
 
         scan_run = ScanRun(
@@ -228,58 +276,13 @@ class PhotoScannerService:
 
         error_notes: list[str] = []
         try:
-            for root in roots:
-                if max_photos > 0 and scan_run.photos_indexed >= max_photos:
-                    break
-                if not root.exists() or not root.is_dir():
-                    scan_run.errors_count += 1
-                    msg = f"Missing scan root: {root.as_posix()}"
-                    error_notes.append(msg)
-                    _record_error(
-                        session, scan_run, root.as_posix(), root.name,
-                        "missing_root", msg,
-                    )
-                    continue
-                for file_path in self._walk_root(root):
-                    if max_photos > 0 and scan_run.photos_indexed >= max_photos:
-                        break
-                    scan_run.files_seen += 1
-                    if not is_supported_file(file_path):
-                        continue
-                    try:
-                        with session.begin_nested():
-                            photo = self._index_file(
-                                session=session,
-                                file_path=file_path,
-                                scan_run=scan_run,
-                            )
-                        if photo is not None:
-                            scan_run.photos_indexed += 1
-                    except (OSError, UnidentifiedImageError, ValueError) as exc:
-                        scan_run.errors_count += 1
-                        msg = f"{file_path.name}: {exc}"
-                        error_notes.append(msg)
-                        logger.warning("Scan error for %s: %s", file_path, exc)
-                        if isinstance(exc, UnidentifiedImageError):
-                            error_type = "corrupt"
-                        elif isinstance(exc, OSError):
-                            error_type = "permission"
-                        else:
-                            error_type = "corrupt"
-                        _record_error(
-                            session, scan_run,
-                            file_path.as_posix(), file_path.name,
-                            error_type, str(exc),
-                        )
-
-            scan_run.status = (
-                "completed_with_errors" if scan_run.errors_count else "completed"
+            self._scan_roots(
+                session=session,
+                scan_run=scan_run,
+                roots=roots,
+                error_notes=error_notes,
             )
-            if max_photos > 0 and scan_run.photos_indexed >= max_photos:
-                limit_note = (
-                    f"Scan cap reached after indexing {max_photos} photos."
-                )
-                error_notes.append(limit_note)
+            self._finalize_scan_run(scan_run=scan_run, error_notes=error_notes)
         except SQLAlchemyError as exc:
             logger.exception("Fatal database error during scan")
             session.rollback()
@@ -303,6 +306,214 @@ class PhotoScannerService:
         session.commit()
         session.refresh(scan_run)
         return scan_run
+
+    def _scan_roots(
+        self,
+        session: Session,
+        scan_run: ScanRun,
+        roots: list[Path],
+        error_notes: list[str],
+    ) -> None:
+        """Walk configured roots until the scan completes or reaches its cap."""
+        for root in roots:
+            if self._scan_cap_reached(scan_run):
+                break
+            if not root.exists() or not root.is_dir():
+                self._record_missing_root(
+                    session=session,
+                    scan_run=scan_run,
+                    root=root,
+                    error_notes=error_notes,
+                )
+                continue
+            self._scan_root(
+                session=session,
+                scan_run=scan_run,
+                root=root,
+                error_notes=error_notes,
+            )
+
+    def _scan_root(
+        self,
+        session: Session,
+        scan_run: ScanRun,
+        root: Path,
+        error_notes: list[str],
+    ) -> None:
+        """Scan one filesystem root for supported image files."""
+        for file_path in self._walk_root(root):
+            if self._scan_cap_reached(scan_run):
+                break
+            self._process_candidate(
+                session=session,
+                scan_run=scan_run,
+                file_path=file_path,
+                error_notes=error_notes,
+            )
+
+    def _process_candidate(
+        self,
+        session: Session,
+        scan_run: ScanRun,
+        file_path: Path,
+        error_notes: list[str],
+    ) -> None:
+        """Attempt to index one discovered file and persist any scan errors."""
+        scan_run.files_seen += 1
+        if not is_supported_file(file_path):
+            return
+
+        try:
+            with session.begin_nested():
+                photo = self._index_file(
+                    session=session,
+                    file_path=file_path,
+                    scan_run=scan_run,
+                )
+                if photo is not None:
+                    self._record_indexed_photo(
+                        session=session,
+                        scan_run=scan_run,
+                        photo=photo,
+                    )
+                    scan_run.photos_indexed += 1
+        except RECOVERABLE_SCAN_EXCEPTIONS as exc:
+            self._record_scan_exception(
+                session=session,
+                scan_run=scan_run,
+                file_path=file_path,
+                error_notes=error_notes,
+                exc=exc,
+            )
+
+    def _record_missing_root(
+        self,
+        session: Session,
+        scan_run: ScanRun,
+        root: Path,
+        error_notes: list[str],
+    ) -> None:
+        """Persist a scan error when a configured root is missing."""
+        scan_run.errors_count += 1
+        reason = f"Missing scan root: {root.as_posix()}"
+        error_notes.append(reason)
+        _record_error(
+            session=session,
+            scan_run=scan_run,
+            error=ScanErrorDetails(
+                file_path=root.as_posix(),
+                file_name=root.name,
+                error_type="missing_root",
+                reason=reason,
+                diagnostic_metadata={
+                    "processing_stage": "scan_root_validation",
+                    "path_exists": False,
+                },
+            ),
+        )
+
+    def _record_scan_exception(
+        self,
+        session: Session,
+        scan_run: ScanRun,
+        file_path: Path,
+        error_notes: list[str],
+        exc: Exception,
+    ) -> None:
+        """Persist a scan error when reading or parsing a file fails."""
+        scan_run.errors_count += 1
+        error_notes.append(f"{file_path.name}: {exc}")
+        logger.warning("Scan error for %s: %s", file_path, exc)
+        _record_error(
+            session=session,
+            scan_run=scan_run,
+            error=ScanErrorDetails(
+                file_path=file_path.as_posix(),
+                file_name=file_path.name,
+                error_type=self._classify_scan_exception(exc),
+                reason=str(exc),
+                diagnostic_metadata=self._build_file_diagnostics(
+                    file_path=file_path,
+                    processing_stage="file_processing",
+                    exception=exc,
+                ),
+            ),
+        )
+
+    def _record_indexed_photo(
+        self,
+        session: Session,
+        scan_run: ScanRun,
+        photo: Photo,
+    ) -> None:
+        """Persist the successful scan-run-to-photo association once per run."""
+        existing_link = session.get(
+            ScanRunPhoto,
+            {"scan_run_id": scan_run.id, "photo_id": photo.id},
+        )
+        if existing_link is None:
+            session.add(ScanRunPhoto(scan_run_id=scan_run.id, photo_id=photo.id))
+            session.flush()
+
+    def _finalize_scan_run(self, scan_run: ScanRun, error_notes: list[str]) -> None:
+        """Apply final status and notes once scanning finishes."""
+        scan_run.status = "completed_with_errors" if scan_run.errors_count else "completed"
+        if self._scan_cap_reached(scan_run):
+            error_notes.append(
+                f"Scan cap reached after indexing {self.settings.scan_max_photos} photos."
+            )
+
+    def _scan_cap_reached(self, scan_run: ScanRun) -> bool:
+        """Return whether the configured scan cap has been reached."""
+        max_photos = self.settings.scan_max_photos
+        return max_photos > 0 and scan_run.photos_indexed >= max_photos
+
+    def _classify_scan_exception(
+        self,
+        exc: Exception,
+    ) -> str:
+        """Map low-level image processing exceptions to persisted error types."""
+        if isinstance(exc, UnidentifiedImageError):
+            return "corrupt"
+        if isinstance(exc, PermissionError):
+            return "permission"
+        if isinstance(exc, OSError) and not isinstance(exc, UnidentifiedImageError):
+            return "file_io"
+        if isinstance(exc, ValueError):
+            return "invalid_metadata"
+        return "processing_error"
+
+    def _build_file_diagnostics(
+        self,
+        file_path: Path,
+        processing_stage: str,
+        *,
+        exception: Exception | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Collect structured diagnostics that are safe to persist as JSON."""
+        diagnostics: dict[str, Any] = {
+            "processing_stage": processing_stage,
+            "extension": file_path.suffix.lower() or None,
+            "mime_type_guess": mimetypes.guess_type(file_path.name)[0],
+            "path_exists": file_path.exists(),
+        }
+        try:
+            stat_result = file_path.stat()
+        except OSError as stat_error:
+            diagnostics["stat_error"] = str(stat_error)
+        else:
+            diagnostics["file_size_bytes"] = stat_result.st_size
+            diagnostics["file_modified_at"] = datetime.fromtimestamp(
+                stat_result.st_mtime,
+                tz=UTC,
+            ).isoformat()
+
+        if exception is not None:
+            diagnostics["exception_class"] = type(exception).__name__
+        if extra:
+            diagnostics.update(extra)
+        return diagnostics
 
     def _walk_root(self, root: Path) -> list[Path]:
         """Safely traverse one configured root without following symlinked directories."""
@@ -334,11 +545,25 @@ class PhotoScannerService:
         if duplicate_photo is not None and (
             existing_photo is None or duplicate_photo.id != existing_photo.id
         ):
+            scan_run.errors_count += 1
             _record_error(
-                session, scan_run,
-                resolved_path.as_posix(), resolved_path.name,
-                "duplicate",
-                f"Duplicate content (matches {duplicate_photo.file_name})",
+                session=session,
+                scan_run=scan_run,
+                error=ScanErrorDetails(
+                    file_path=resolved_path.as_posix(),
+                    file_name=resolved_path.name,
+                    error_type="duplicate",
+                    reason=f"Duplicate content (matches {duplicate_photo.file_name})",
+                    diagnostic_metadata=self._build_file_diagnostics(
+                        file_path=resolved_path,
+                        processing_stage="duplicate_check",
+                        extra={
+                            "content_hash": content_hash,
+                            "duplicate_photo_id": duplicate_photo.id,
+                            "duplicate_file_name": duplicate_photo.file_name,
+                        },
+                    ),
+                ),
             )
             return None
 
@@ -348,9 +573,23 @@ class PhotoScannerService:
             if rejection is not None:
                 scan_run.errors_count += 1
                 _record_error(
-                    session, scan_run,
-                    resolved_path.as_posix(), resolved_path.name,
-                    rejection.error_type, rejection.reason,
+                    session=session,
+                    scan_run=scan_run,
+                    error=ScanErrorDetails(
+                        file_path=resolved_path.as_posix(),
+                        file_name=resolved_path.name,
+                        error_type=rejection.error_type,
+                        reason=rejection.reason,
+                        diagnostic_metadata=self._build_file_diagnostics(
+                            file_path=resolved_path,
+                            processing_stage="photo_validation",
+                            extra={
+                                "width": normalized_image.width,
+                                "height": normalized_image.height,
+                                "content_hash": content_hash,
+                            },
+                        ),
+                    ),
                 )
                 return None
             width, height = normalized_image.size
@@ -386,19 +625,17 @@ class PhotoScannerService:
 def _record_error(
     session: Session,
     scan_run: ScanRun,
-    file_path: str,
-    file_name: str,
-    error_type: str,
-    reason: str,
+    error: ScanErrorDetails,
 ) -> None:
     """Persist a scan error record for later review."""
     session.add(
         ScanError(
             scan_run_id=scan_run.id,
-            file_path=file_path,
-            file_name=file_name,
-            error_type=error_type,
-            reason=reason,
+            file_path=error.file_path,
+            file_name=error.file_name,
+            error_type=error.error_type,
+            reason=error.reason,
+            diagnostic_metadata=error.diagnostic_metadata,
         )
     )
     session.flush()
@@ -406,10 +643,5 @@ def _record_error(
 
 def count_photos(session: Session, filters: PhotoFilters) -> int:
     """Count photos matching the provided filters."""
-    query = select(Photo.id)
-    start, end = build_date_range(filters)
-    if start is not None:
-        query = query.where(Photo.captured_at >= start)
-    if end is not None:
-        query = query.where(Photo.captured_at <= end)
+    query = apply_photo_filters(select(Photo.id).distinct(), filters)
     return len(session.scalars(query).all())

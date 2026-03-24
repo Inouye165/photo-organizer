@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.db.session import get_session_factory
 from app.models.photo import Photo
+from app.services.media_variants import VariantService
 
 register_heif_opener()
 
@@ -130,7 +131,7 @@ def test_scan_skips_duplicate_content_hashes(client, prepared_scan_root: Path) -
     payload = scan_response.json()
     assert payload["files_seen"] == 5
     assert payload["photos_indexed"] == 2
-    assert payload["errors_count"] == 1
+    assert payload["errors_count"] == 2
 
     with get_session_factory()() as session:
         photos = session.scalars(select(Photo).order_by(Photo.file_name)).all()
@@ -237,6 +238,75 @@ def test_scan_errors_are_persisted_and_queryable(client) -> None:
     assert len(found_broken) == 1
     assert found_broken[0]["error_type"] == "corrupt"
     assert found_broken[0]["scan_run_id"] == scan_id
+    assert found_broken[0]["diagnostic_metadata"]["processing_stage"] == "file_processing"
+    assert found_broken[0]["diagnostic_metadata"]["exception_class"] == "UnidentifiedImageError"
+
+
+def test_scan_continues_after_non_database_processing_error(
+    client,
+    monkeypatch,
+) -> None:
+    """Unexpected per-file processing failures are recorded without aborting the batch."""
+    original_ensure_variants = VariantService.ensure_variants
+
+    def flaky_variant_generation(self, session, photo, source_path):
+        if photo.file_name == "mountain.png":
+            raise RuntimeError("Variant generation crashed")
+        return original_ensure_variants(self, session, photo, source_path)
+
+    monkeypatch.setattr(VariantService, "ensure_variants", flaky_variant_generation)
+
+    scan_response = client.post("/api/scan-runs")
+    assert scan_response.status_code == 200
+    payload = scan_response.json()
+    assert payload["status"] == "completed_with_errors"
+    assert payload["photos_indexed"] == 1
+    assert payload["errors_count"] == 2
+
+    photos_response = client.get("/api/photos", params={"page": 1, "page_size": 10})
+    assert photos_response.status_code == 200
+    photo_names = {item["file_name"] for item in photos_response.json()["items"]}
+    assert photo_names == {"beach.jpg"}
+
+    errors_response = client.get("/api/scan-errors", params={"scan_run_id": payload["id"]})
+    assert errors_response.status_code == 200
+    error_items = errors_response.json()["items"]
+    mountain_error = next(item for item in error_items if item["file_name"] == "mountain.png")
+    assert mountain_error["error_type"] == "processing_error"
+    assert mountain_error["diagnostic_metadata"]["exception_class"] == "RuntimeError"
+
+
+def test_photos_can_be_filtered_by_scan_run(client, prepared_scan_root: Path) -> None:
+    """Successful photos remain queryable for each scan run through the run-photo link."""
+    first_scan = client.post("/api/scan-runs")
+    assert first_scan.status_code == 200
+    first_scan_id = first_scan.json()["id"]
+
+    create_photo_series(prepared_scan_root, count=1)
+
+    second_scan = client.post("/api/scan-runs")
+    assert second_scan.status_code == 200
+    second_scan_id = second_scan.json()["id"]
+
+    first_run_photos = client.get(
+        "/api/photos",
+        params={"page": 1, "page_size": 10, "scan_run_id": first_scan_id},
+    )
+    assert first_run_photos.status_code == 200
+    assert first_run_photos.json()["total"] == 2
+
+    second_run_photos = client.get(
+        "/api/photos",
+        params={"page": 1, "page_size": 10, "scan_run_id": second_scan_id},
+    )
+    assert second_run_photos.status_code == 200
+    second_run_payload = second_run_photos.json()
+    assert second_run_payload["total"] == 3
+    assert {item["file_name"] for item in second_run_payload["items"]} == {
+        "beach.jpg",
+        "mountain.png",
+        "bulk-00.jpg",
+    }
 
 
 def test_scan_errors_returns_empty_list_before_any_scan(client) -> None:

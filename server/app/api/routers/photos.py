@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.db.session import get_db_session
 from app.models.photo import Photo
+from app.models.scan_run_photo import ScanRunPhoto
 from app.schemas.photo import (
     PhotoDetail,
     PhotoListItem,
@@ -15,7 +16,7 @@ from app.schemas.photo import (
     PhotoListResponse,
     PhotoVariantRead,
 )
-from app.services.photo_scanner import PhotoFilters, build_date_range, count_photos
+from app.services.photo_scanner import PhotoFilters, apply_photo_filters, count_photos
 
 router = APIRouter()
 
@@ -74,25 +75,34 @@ def serialize_photo_detail(photo: Photo) -> PhotoDetail:
 
 
 @router.get("", response_model=PhotoListResponse)
-def list_photos(
+def list_photos(  # noqa: PLR0913
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=24, ge=1, le=200),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
+    scan_run_id: int | None = Query(default=None, ge=1),
     session: Session = Depends(get_db_session),
 ) -> PhotoListResponse:
     """Return a paginated gallery response filtered by capture date."""
     query_params = PhotoListQuery.model_validate(
-        {"page": page, "page_size": page_size, "date_from": date_from, "date_to": date_to}
+        {
+            "page": page,
+            "page_size": page_size,
+            "date_from": date_from,
+            "date_to": date_to,
+            "scan_run_id": scan_run_id,
+        }
     )
-    filters = PhotoFilters(date_from=query_params.date_from, date_to=query_params.date_to)
-    query = select(Photo).options(selectinload(Photo.variants))
-    start, end = build_date_range(filters)
-    if start is not None:
-        query = query.where(Photo.captured_at >= start)
-    if end is not None:
-        query = query.where(Photo.captured_at <= end)
-    query = query.order_by(desc(Photo.captured_at), desc(Photo.id))
+    filters = PhotoFilters(
+        date_from=query_params.date_from,
+        date_to=query_params.date_to,
+        scan_run_id=query_params.scan_run_id,
+    )
+    query = apply_photo_filters(select(Photo).options(selectinload(Photo.variants)), filters)
+    if query_params.scan_run_id is not None:
+        query = query.order_by(desc(ScanRunPhoto.indexed_at), desc(Photo.id))
+    else:
+        query = query.order_by(desc(Photo.captured_at), desc(Photo.id))
     query = query.offset((query_params.page - 1) * query_params.page_size)
     query = query.limit(query_params.page_size)
     photos = session.scalars(query).all()

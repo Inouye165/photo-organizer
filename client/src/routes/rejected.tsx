@@ -1,39 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, FileWarning, ShieldX } from "lucide-react";
+import { ArrowLeft, FileWarning } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { AppShell } from "@/components/app-shell";
+import { ScanErrorTable } from "@/components/scan-error-table";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { getScanErrors } from "@/lib/api";
 
 const pageSize = 50;
-
-function errorTypeLabel(errorType: string) {
-  const labels: Record<string, string> = {
-    corrupt: "Corrupt file",
-    rejected: "Not a photo",
-    permission: "Permission denied",
-    duplicate: "Duplicate content",
-    missing_root: "Missing folder",
-  };
-  return labels[errorType] ?? errorType;
-}
-
-function errorTypeIcon(errorType: string) {
-  switch (errorType) {
-    case "corrupt":
-      return <FileWarning size={16} className="text-red-500" />;
-    case "rejected":
-      return <ShieldX size={16} className="text-amber-500" />;
-    case "permission":
-      return <ShieldX size={16} className="text-red-500" />;
-    case "duplicate":
-      return <AlertTriangle size={16} className="text-blue-500" />;
-    default:
-      return <AlertTriangle size={16} className="text-gray-500" />;
-  }
-}
 
 export function RejectedFilesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -89,68 +64,15 @@ export function RejectedFilesPage() {
         </div>
 
         <div className="mt-3 flex-1 overflow-y-auto">
-          {errorsQuery.isLoading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="h-14 animate-pulse rounded-2xl bg-black/5"
-                />
-              ))}
-            </div>
-          ) : errorsQuery.isError ? (
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              Failed to load scan errors.{" "}
-              <button
-                className="underline"
-                onClick={() => void errorsQuery.refetch()}
-                type="button"
-              >
-                Retry
-              </button>
-            </div>
-          ) : errorsQuery.data && errorsQuery.data.items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-              <AlertTriangle size={32} className="text-black/20" />
-              <p className="text-lg font-semibold text-ink">No rejected files</p>
-              <p className="text-sm text-black/55">
-                All scanned files were successfully indexed or no scan has been
-                run yet.
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-black/6">
-              {errorsQuery.data?.items.map((error) => (
-                <div
-                  key={error.id}
-                  className="flex items-start gap-3 py-3 first:pt-0"
-                >
-                  <div className="mt-0.5 flex-shrink-0">
-                    {errorTypeIcon(error.error_type)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-semibold text-ink">
-                        {error.file_name}
-                      </p>
-                      <span className="flex-shrink-0 rounded-full bg-black/5 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-black/50">
-                        {errorTypeLabel(error.error_type)}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-sm text-black/55">
-                      {error.reason}
-                    </p>
-                    <p
-                      className="mt-0.5 truncate text-xs text-black/35"
-                      title={error.file_path}
-                    >
-                      {error.file_path}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          <ScanErrorTable
+            emptyMessage="All scanned files were successfully indexed or no scan has been run yet."
+            emptyTitle="No rejected files"
+            errorMessage={errorsQuery.error instanceof Error ? errorsQuery.error.message : null}
+            errors={errorsQuery.data?.items ?? []}
+            isError={errorsQuery.isError}
+            isLoading={errorsQuery.isLoading}
+            onRetry={() => void errorsQuery.refetch()}
+          />
         </div>
 
         {totalPages > 1 ? (
