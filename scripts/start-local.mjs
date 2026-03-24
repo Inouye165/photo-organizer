@@ -117,10 +117,13 @@ function isManagedPostgresUrl(databaseUrl) {
   }
 }
 
-function withPrefix(stream, prefix) {
+function withPrefix(prefix) {
+  let buffer = "";
   return (chunk) => {
-    const lines = chunk.toString().split(/\r?\n/u);
-    for (const line of lines) {
+    buffer += chunk.toString();
+    const parts = buffer.split(/\r?\n/u);
+    buffer = parts.pop() ?? "";
+    for (const line of parts) {
       if (line.length > 0) {
         process.stdout.write(`${prefix} ${line}\n`);
       }
@@ -549,9 +552,10 @@ function startManagedProcess(command, args, options) {
   child.stdout.on("data", withPrefix(options.prefix));
   child.stderr.on("data", withPrefix(options.prefix));
   child.on("exit", (code) => {
-    const message = `${options.prefix} exited with code ${code ?? "unknown"}`;
-    console.error(message);
-    shutdown(code ?? 1);
+    if (!shuttingDown) {
+      console.error(`${options.prefix} exited unexpectedly with code ${code ?? "unknown"}`);
+      shutdown(code ?? 1);
+    }
   });
   child.on("error", (error) => {
     console.error(`${options.prefix} failed to start: ${error.message}`);
@@ -562,11 +566,32 @@ function startManagedProcess(command, args, options) {
   return child;
 }
 
-function shutdown(exitCode = 0) {
-  for (const child of children) {
-    if (!child.killed) {
+let shuttingDown = false;
+
+function killChild(child) {
+  if (child.killed) {
+    return;
+  }
+
+  if (process.platform === "win32" && child.pid) {
+    try {
+      spawn("taskkill", ["/pid", String(child.pid), "/f", "/t"], { stdio: "ignore" });
+    } catch {
       child.kill();
     }
+  } else {
+    child.kill();
+  }
+}
+
+function shutdown(exitCode = 0) {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  console.log("[start:local] Shutting down...");
+  for (const child of children) {
+    killChild(child);
   }
   process.exit(exitCode);
 }
@@ -575,6 +600,13 @@ process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
 async function main() {
+  if (!existsSync(serverDir)) {
+    throw new Error(`Server directory not found: ${serverDir}`);
+  }
+  if (!existsSync(clientDir)) {
+    throw new Error(`Client directory not found: ${clientDir}`);
+  }
+
   const fileEnv = parseEnvFile(path.join(repoDir, ".env"));
   await ensurePythonEnvironment();
   await ensureFrontendDependencies();

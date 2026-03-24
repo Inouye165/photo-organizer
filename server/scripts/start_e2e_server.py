@@ -8,10 +8,10 @@ from pathlib import Path
 
 import numpy as np
 import uvicorn
-from alembic.config import Config
 from PIL import Image
 
 from alembic import command
+from alembic.config import Config
 
 
 def reset_sqlite_state(database_url: str, media_root: str) -> None:
