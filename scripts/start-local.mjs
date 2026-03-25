@@ -22,6 +22,7 @@ const dependencyFailureLimit = 3;
 const backendUrl = `http://${backendHost}:${backendPort}/health`;
 const frontendUrl = `http://${frontendHost}:${frontendPort}/`;
 const defaultPostgresUrl = `postgresql+psycopg://photoorganizer:photoorganizer@127.0.0.1:${bundledPostgresPort}/photoorganizer`;
+const fallbackSqliteUrl = `sqlite:///${path.join(serverDir, "photo-organizer.db").replaceAll("\\", "/")}`;
 const postgresContainerName = "photo-organizer-postgres";
 const postgresDataDir = path.join(repoDir, "infra", "postgres-data");
 const expectedPostgresEnv = {
@@ -34,12 +35,23 @@ const dockerDesktopCandidates = [
   path.join("C:\\", "Program Files", "Docker", "Docker", "Docker Desktop"),
   path.join(process.env.LOCALAPPDATA || "", "Programs", "Docker", "Docker", "Docker Desktop.exe"),
 ].filter(Boolean);
+const dockerCliCandidates = [
+  process.env.PHOTO_ORGANIZER_DOCKER_CLI,
+  "docker",
+  path.join("C:\\", "Program Files", "Docker", "Docker", "resources", "bin", "docker.exe"),
+].filter(Boolean);
+const dockerComposeStandaloneCandidates = [
+  process.env.PHOTO_ORGANIZER_DOCKER_COMPOSE_CLI,
+  "docker-compose",
+  path.join("C:\\", "Program Files", "Docker", "Docker", "resources", "bin", "docker-compose.exe"),
+].filter(Boolean);
 
 const children = [];
 let dependencyMonitorTimer = null;
 let dependencyMonitorInFlight = false;
 let dependencyFailureCount = 0;
 let composeInvocationPromise;
+let dockerCliCommandPromise;
 
 async function commandWorks(command, args, options = {}) {
   try {
@@ -53,6 +65,20 @@ async function commandWorks(command, args, options = {}) {
   } catch {
     return false;
   }
+}
+
+async function resolveAvailableCommand(candidates, args = ["--version"], options = {}) {
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+
+    if (await commandWorks(candidate, args, options)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function parseEnvFile(filePath) {
@@ -129,6 +155,10 @@ function normalizeDatabaseUrl(rawValue) {
   return `sqlite:///${absolutePath.replaceAll("\\", "/")}`;
 }
 
+function hasExplicitValue(rawValue) {
+  return typeof rawValue === "string" && rawValue.trim().length > 0;
+}
+
 function isManagedPostgresUrl(databaseUrl) {
   try {
     const parsed = new URL(databaseUrl);
@@ -171,12 +201,14 @@ function buildNpmInvocation(argumentsList) {
 async function getDockerComposeInvocation() {
   if (!composeInvocationPromise) {
     composeInvocationPromise = (async () => {
-      if (await commandWorks("docker", ["compose", "version"])) {
-        return { command: "docker", argsPrefix: ["compose"] };
+      const dockerCliCommand = await getDockerCliCommand();
+      if (await commandWorks(dockerCliCommand, ["compose", "version"])) {
+        return { command: dockerCliCommand, argsPrefix: ["compose"] };
       }
 
-      if (await commandWorks("docker-compose", ["version"])) {
-        return { command: "docker-compose", argsPrefix: [] };
+      const dockerComposeCommand = await resolveAvailableCommand(dockerComposeStandaloneCandidates, ["--version"]);
+      if (dockerComposeCommand) {
+        return { command: dockerComposeCommand, argsPrefix: [] };
       }
 
       throw new Error(
@@ -186,6 +218,23 @@ async function getDockerComposeInvocation() {
   }
 
   return composeInvocationPromise;
+}
+
+async function getDockerCliCommand() {
+  if (!dockerCliCommandPromise) {
+    dockerCliCommandPromise = (async () => {
+      const command = await resolveAvailableCommand(dockerCliCandidates, ["--version"]);
+      if (!command) {
+        throw new Error(
+          "Docker CLI is not installed or could not be located. Install Docker Desktop or set PHOTO_ORGANIZER_DATABASE_URL to a different database before running start:local.",
+        );
+      }
+
+      return command;
+    })();
+  }
+
+  return dockerCliCommandPromise;
 }
 
 async function runDockerCompose(args, options = {}) {
@@ -341,7 +390,8 @@ async function waitForTcpPort(host, port, label, timeoutMs = 120000) {
 
 async function dockerEngineReady() {
   try {
-    await runCommand("docker", ["info"], {
+    const dockerCliCommand = await getDockerCliCommand();
+    await runCommand(dockerCliCommand, ["info"], {
       cwd: repoDir,
       stdio: "ignore",
     });
@@ -353,8 +403,9 @@ async function dockerEngineReady() {
 
 async function getContainerHealth(containerName) {
   try {
+    const dockerCliCommand = await getDockerCliCommand();
     const output = await runCommandCapture(
-      "docker",
+      dockerCliCommand,
       ["inspect", "--format", "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}", containerName],
       { cwd: repoDir },
     );
@@ -437,11 +488,7 @@ async function waitForBundledPostgresAuth(databaseUrl, timeoutMs = 120000) {
 }
 
 async function ensureDockerEngine() {
-  if (!(await commandWorks("docker", ["version"]))) {
-    throw new Error(
-      "Docker CLI is not installed or not on PATH. Install Docker Desktop or set PHOTO_ORGANIZER_DATABASE_URL to a different database before running start:local.",
-    );
-  }
+  await getDockerCliCommand();
 
   if (await dockerEngineReady()) {
     return;
@@ -474,7 +521,8 @@ async function ensureDockerEngine() {
 
 async function containerExists(containerName) {
   try {
-    await runCommand("docker", ["container", "inspect", containerName], {
+    const dockerCliCommand = await getDockerCliCommand();
+    await runCommand(dockerCliCommand, ["container", "inspect", containerName], {
       cwd: repoDir,
       stdio: "ignore",
     });
@@ -486,7 +534,8 @@ async function containerExists(containerName) {
 
 async function startExistingContainer(containerName) {
   console.log(`[start:local] Starting existing container ${containerName}...`);
-  await runCommand("docker", ["start", containerName], {
+  const dockerCliCommand = await getDockerCliCommand();
+  await runCommand(dockerCliCommand, ["start", containerName], {
     cwd: repoDir,
     stdio: "inherit",
   });
@@ -494,7 +543,8 @@ async function startExistingContainer(containerName) {
 
 async function removeContainer(containerName) {
   console.log(`[start:local] Recreating incompatible container ${containerName}...`);
-  await runCommand("docker", ["rm", "-f", containerName], {
+  const dockerCliCommand = await getDockerCliCommand();
+  await runCommand(dockerCliCommand, ["rm", "-f", containerName], {
     cwd: repoDir,
     stdio: "inherit",
   });
@@ -520,8 +570,9 @@ async function resetBundledPostgresDataDirectory() {
 }
 
 async function getContainerEnvironment(containerName) {
+  const dockerCliCommand = await getDockerCliCommand();
   const output = await runCommandCapture(
-    "docker",
+    dockerCliCommand,
     ["inspect", "--format", "{{range .Config.Env}}{{println .}}{{end}}", containerName],
     { cwd: repoDir },
   );
@@ -543,8 +594,9 @@ async function getContainerEnvironment(containerName) {
 }
 
 async function getContainerPublishedPort(containerName, containerPort) {
+  const dockerCliCommand = await getDockerCliCommand();
   const output = await runCommandCapture(
-    "docker",
+    dockerCliCommand,
     ["inspect", "--format", "{{json .NetworkSettings.Ports}}", containerName],
     { cwd: repoDir },
   );
@@ -564,7 +616,8 @@ async function containerMatchesBundledPostgresConfig(containerName) {
 }
 
 async function findDockerContainerPublishingPort(port, excludedContainerName) {
-  const output = await runCommandCapture("docker", ["ps", "--format", "{{.Names}}\t{{.Ports}}"], {
+  const dockerCliCommand = await getDockerCliCommand();
+  const output = await runCommandCapture(dockerCliCommand, ["ps", "--format", "{{.Names}}\t{{.Ports}}"], {
     cwd: repoDir,
   });
 
@@ -670,6 +723,52 @@ function startManagedProcess(command, args, options) {
   return child;
 }
 
+async function checkHttpCondition(url, isReady) {
+  try {
+    const response = await fetch(url);
+    return await isReady(response);
+  } catch {
+    return false;
+  }
+}
+
+async function isTcpPortOpen(host, port) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port }, () => {
+      socket.end();
+      resolve(true);
+    });
+
+    socket.on("error", () => resolve(false));
+    socket.setTimeout(1000, () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+async function ensureExpectedHttpService({
+  host,
+  port,
+  url,
+  label,
+  isReady,
+  start,
+}) {
+  if (await checkHttpCondition(url, isReady)) {
+    console.log(`[start:local] Reusing existing ${label.toLowerCase()} at ${url}`);
+    return false;
+  }
+
+  if (await isTcpPortOpen(host, port)) {
+    throw new Error(`${label} port ${port} is already in use by another process that is not serving the expected app.`);
+  }
+
+  start();
+  await waitForHttpCondition(url, label, isReady);
+  return true;
+}
+
 let shuttingDown = false;
 
 function killChild(child) {
@@ -763,10 +862,28 @@ async function main() {
   await ensurePythonEnvironment();
   await ensureFrontendDependencies();
 
+  const configuredDatabaseUrl = process.env.PHOTO_ORGANIZER_DATABASE_URL ?? fileEnv.PHOTO_ORGANIZER_DATABASE_URL;
+  const databaseUrlWasExplicit = hasExplicitValue(configuredDatabaseUrl);
+  let databaseUrl = normalizeDatabaseUrl(configuredDatabaseUrl);
+
+  if (isManagedPostgresUrl(databaseUrl)) {
+    try {
+      await ensureManagedPostgres(databaseUrl);
+    } catch (error) {
+      if (databaseUrlWasExplicit) {
+        throw error;
+      }
+
+      console.warn(`[start:local] ${error.message}`);
+      console.warn(`[start:local] Falling back to local SQLite database at ${fallbackSqliteUrl}.`);
+      databaseUrl = fallbackSqliteUrl;
+    }
+  } else if (databaseUrl.startsWith("sqlite:///")) {
+    console.warn("[start:local] Using explicitly configured SQLite database; PostgreSQL container startup skipped.");
+  }
+
   const backendEnv = {
-    PHOTO_ORGANIZER_DATABASE_URL: normalizeDatabaseUrl(
-      process.env.PHOTO_ORGANIZER_DATABASE_URL ?? fileEnv.PHOTO_ORGANIZER_DATABASE_URL,
-    ),
+    PHOTO_ORGANIZER_DATABASE_URL: databaseUrl,
     PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT: normalizeGeneratedMediaRoot(
       process.env.PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT ?? fileEnv.PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT,
     ),
@@ -779,27 +896,18 @@ async function main() {
       '["http://127.0.0.1:5173","http://localhost:5173"]',
   };
 
-  if (isManagedPostgresUrl(backendEnv.PHOTO_ORGANIZER_DATABASE_URL)) {
-    await ensureManagedPostgres(backendEnv.PHOTO_ORGANIZER_DATABASE_URL);
-  } else if (backendEnv.PHOTO_ORGANIZER_DATABASE_URL.startsWith("sqlite:///")) {
-    console.warn("[start:local] Using explicitly configured SQLite database; PostgreSQL container startup skipped.");
-  }
-
   const frontendEnv = {
     VITE_API_BASE_URL:
       process.env.VITE_API_BASE_URL ?? fileEnv.VITE_API_BASE_URL ?? "http://127.0.0.1:8000",
   };
 
   console.log("[start:local] Starting backend...");
-  startManagedProcess(venvPython, ["scripts/start_local_server.py"], {
-    cwd: serverDir,
-    env: backendEnv,
-    prefix: "[backend]",
-  });
-  await waitForHttpCondition(
-    backendUrl,
-    "Backend",
-    async (response) => {
+  await ensureExpectedHttpService({
+    host: backendHost,
+    port: backendPort,
+    url: backendUrl,
+    label: "Backend",
+    isReady: async (response) => {
       if (!response.ok) {
         return false;
       }
@@ -811,7 +919,14 @@ async function main() {
         return false;
       }
     },
-  );
+    start: () => {
+      startManagedProcess(venvPython, ["scripts/start_local_server.py"], {
+        cwd: serverDir,
+        env: backendEnv,
+        prefix: "[backend]",
+      });
+    },
+  });
 
   console.log("[start:local] Starting frontend...");
   const npmDev = buildNpmInvocation([
@@ -824,15 +939,12 @@ async function main() {
     String(frontendPort),
     "--strictPort",
   ]);
-  startManagedProcess(npmDev.command, npmDev.args, {
-    cwd: clientDir,
-    env: frontendEnv,
-    prefix: "[frontend]",
-  });
-  await waitForHttpCondition(
-    frontendUrl,
-    "Frontend",
-    async (response) => {
+  await ensureExpectedHttpService({
+    host: frontendHost,
+    port: frontendPort,
+    url: frontendUrl,
+    label: "Frontend",
+    isReady: async (response) => {
       if (!response.ok) {
         return false;
       }
@@ -840,7 +952,14 @@ async function main() {
       const html = await response.text();
       return html.includes('<div id="root"></div>') || html.includes('<div id="root">');
     },
-  );
+    start: () => {
+      startManagedProcess(npmDev.command, npmDev.args, {
+        cwd: clientDir,
+        env: frontendEnv,
+        prefix: "[frontend]",
+      });
+    },
+  });
 
   startDependencyMonitor({
     usesManagedPostgres: isManagedPostgresUrl(backendEnv.PHOTO_ORGANIZER_DATABASE_URL),
