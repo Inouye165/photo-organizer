@@ -27,6 +27,7 @@ server/.ruff_cache/
 server/.coverage
 server/*.egg-info/
 server/generated-media/
+server/photo-organizer.db
 server/.tmp/
 
 infra/postgres-data/

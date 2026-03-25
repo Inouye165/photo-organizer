@@ -26,6 +26,103 @@ function normalizeSearchValue(value: string | null) {
   return value ?? "";
 }
 
+function buildPhotoListParams(
+  pageSize: number,
+  filters: {
+    dateFrom?: string;
+    dateTo?: string;
+    scanRunId?: number;
+  } = {},
+) {
+  return {
+    page: 1,
+    page_size: pageSize,
+    ...(filters.dateFrom ? { date_from: filters.dateFrom } : {}),
+    ...(filters.dateTo ? { date_to: filters.dateTo } : {}),
+    ...(filters.scanRunId != null ? { scan_run_id: filters.scanRunId } : {}),
+  };
+}
+
+function buildScanErrorParams(pageSize: number, scanRunId?: number) {
+  return {
+    page: 1,
+    page_size: pageSize,
+    ...(scanRunId != null ? { scan_run_id: scanRunId } : {}),
+  };
+}
+
+type ScanFeedbackStage = "ready" | "running" | "complete";
+
+const scanFeedbackSteps: Array<{
+  stage: ScanFeedbackStage;
+  label: string;
+  description: string;
+}> = [
+  {
+    stage: "ready",
+    label: "Ready to scan",
+    description: "Choose a scan and start when you are ready.",
+  },
+  {
+    stage: "running",
+    label: "Scanning...",
+    description: "Live progress will land here once scan updates are available.",
+  },
+  {
+    stage: "complete",
+    label: "Complete",
+    description: "Review the latest results or start another run.",
+  },
+];
+
+function getScanFeedbackStage(isRunning: boolean, hasLatestScan: boolean): ScanFeedbackStage {
+  if (isRunning) {
+    return "running";
+  }
+
+  if (hasLatestScan) {
+    return "complete";
+  }
+
+  return "ready";
+}
+
+function getScanFeedbackSummary(stage: ScanFeedbackStage) {
+  if (stage === "running") {
+    return "Scanning now";
+  }
+
+  if (stage === "complete") {
+    return "Latest run finished";
+  }
+
+  return "Ready to scan";
+}
+
+function getScanFeedbackDescription(stage: ScanFeedbackStage) {
+  if (stage === "running") {
+    return "Keep this page open while the scanner works. Results and issues will appear below.";
+  }
+
+  if (stage === "complete") {
+    return "Open the latest results, review issues, or start a new run.";
+  }
+
+  return "Start a scan when you want to refresh the library.";
+}
+
+function getScanFeedbackProgressWidth(stage: ScanFeedbackStage) {
+  if (stage === "running") {
+    return "58%";
+  }
+
+  if (stage === "complete") {
+    return "100%";
+  }
+
+  return "12%";
+}
+
 export function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
@@ -70,12 +167,7 @@ export function DashboardPage() {
   const galleryQuery = useQuery({
     queryKey: ["photos", { dateFrom, dateTo }],
     queryFn: () =>
-      getPhotos({
-        page: 1,
-        page_size: galleryPageSize,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      }),
+      getPhotos(buildPhotoListParams(galleryPageSize, { dateFrom, dateTo })),
   });
 
   const detailQuery = useQuery({
@@ -93,12 +185,7 @@ export function DashboardPage() {
   const filteredPhotosModalQuery = useQuery({
     queryKey: ["photos-modal", "filtered", { dateFrom, dateTo, filteredPhotosPageSize }],
     queryFn: () =>
-      getPhotos({
-        page: 1,
-        page_size: filteredPhotosPageSize,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      }),
+      getPhotos(buildPhotoListParams(filteredPhotosPageSize, { dateFrom, dateTo })),
     enabled: isFilteredPhotosOpen,
   });
 
@@ -108,22 +195,19 @@ export function DashboardPage() {
   const selectedRunPhotosModalQuery = useQuery({
     queryKey: ["photos-modal", "run", selectedRunId, runPhotosPageSize],
     queryFn: () =>
-      getPhotos({
-        page: 1,
-        page_size: runPhotosPageSize,
-        scan_run_id: selectedRunId ?? undefined,
-      }),
+      getPhotos(
+        buildPhotoListParams(
+          runPhotosPageSize,
+          selectedRunId != null ? { scanRunId: selectedRunId } : {},
+        ),
+      ),
     enabled: isRunPhotosOpen && selectedRunId != null,
   });
 
   const scanErrorsQuery = useQuery({
     queryKey: ["scan-errors-modal", selectedRunId, runErrorsPageSize],
     queryFn: () =>
-      getScanErrors({
-        scan_run_id: selectedRunId ?? undefined,
-        page: 1,
-        page_size: runErrorsPageSize,
-      }),
+      getScanErrors(buildScanErrorParams(runErrorsPageSize, selectedRunId ?? undefined)),
     enabled: isRunErrorsOpen && selectedRunId != null,
   });
 
@@ -201,13 +285,16 @@ export function DashboardPage() {
       : null;
 
   const statusHint = dateFrom || dateTo ? "Matching current date window" : "Currently indexed originals";
-  const latestRunModeLabel = latestScan?.mode === "evaluation" ? "Latest evaluation" : "Latest run";
   const latestRunPhotosHint = latestScan?.mode === "evaluation"
     ? "Inspect accepted likely photos from the bounded evaluation run."
     : "Inspect accepted photos from the latest full-library scan.";
   const latestRunIssuesHint = latestScan?.mode === "evaluation"
     ? "Review likely graphics, unreadable files, and other evaluation rejects."
     : "Review failed files and non-photo rejects from the latest full scan.";
+  const scanFeedbackStage = getScanFeedbackStage(isRunning, latestScan != null);
+  const scanFeedbackSummary = getScanFeedbackSummary(scanFeedbackStage);
+  const scanFeedbackDescription = getScanFeedbackDescription(scanFeedbackStage);
+  const scanFeedbackProgressWidth = getScanFeedbackProgressWidth(scanFeedbackStage);
 
   useEffect(() => {
     setRunPhotosPageSize(overlayPageSize);
@@ -272,16 +359,52 @@ export function DashboardPage() {
       </section>
 
       <Card className="grid gap-4 bg-white/72 lg:grid-cols-[1.25fr_0.95fr]" data-testid="controls-row">
-        <div className="space-y-3">
+        <div className="flex h-full flex-col gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-black/45">
               <ScanSearch size={16} />
-              Discovery runs
+              New Scan
             </div>
-            <h2 className="text-2xl font-semibold tracking-tight text-ink">Evaluate likely real photos without mixing in stale runs.</h2>
+            <h2 className="text-2xl font-semibold tracking-tight text-ink">New Scan</h2>
             <p className="max-w-2xl text-sm leading-6 text-black/60">
-              Originals are read from disk but never modified or deleted. The app stores search and classification metadata in the database, then serves stripped browser-facing variants for gallery views. Run a full library scan when you want broad indexing across accessible drives, or start a fresh bounded evaluation that clears app-managed state first and stops after 20 likely photos or 2000 candidates.
+              Start a new run, watch the scanner state, then inspect accepted photos and issues from the latest results.
             </p>
+          </div>
+          <div className="rounded-[28px] border border-black/8 bg-[#f8f3e9]/88 p-4" data-testid="scan-feedback-panel">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-black/45">Scanner state</p>
+                <p className="mt-2 text-xl font-semibold tracking-tight text-ink">{scanFeedbackSummary}</p>
+                <p className="mt-1 text-sm leading-6 text-black/60">{scanFeedbackDescription}</p>
+              </div>
+              <div className="rounded-full border border-black/10 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-black/55">
+                {scanFeedbackStage}
+              </div>
+            </div>
+            <div className="mt-4 h-2 rounded-full bg-black/8">
+              <div
+                aria-hidden="true"
+                className="h-full rounded-full bg-ink/80 transition-[width] duration-300"
+                style={{ width: scanFeedbackProgressWidth }}
+              />
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              {scanFeedbackSteps.map((step) => {
+                const isActive = step.stage === scanFeedbackStage;
+                return (
+                  <div
+                    key={step.stage}
+                    className={isActive
+                      ? "rounded-[22px] border border-black/12 bg-white px-4 py-3 shadow-sm"
+                      : "rounded-[22px] border border-black/8 bg-white/55 px-4 py-3"
+                    }
+                  >
+                    <p className="text-sm font-semibold text-ink">{step.label}</p>
+                    <p className="mt-1 text-sm leading-6 text-black/58">{step.description}</p>
+                  </div>
+                );
+              })}
+            </div>
           </div>
           {scanErrorMessage ? (
             <div className="flex items-center gap-2 rounded-2xl bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -294,7 +417,7 @@ export function DashboardPage() {
               {resetSummaryMessage}
             </div>
           ) : null}
-          <div className="flex flex-wrap gap-2">
+          <div className="mt-auto flex flex-wrap gap-2">
             <Button className="h-10 min-w-40" disabled={isMutating} onClick={() => fullScanMutation.mutate()}>
               {fullScanMutation.isPending ? "Scanning..." : "Run full library scan"}
             </Button>
@@ -319,7 +442,7 @@ export function DashboardPage() {
             <Card className="h-full bg-[#f7f2ea] transition hover:bg-[#f3ece2] disabled:cursor-not-allowed disabled:opacity-70">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-black/42">
                 <Layers3 size={15} />
-                {latestRunModeLabel}
+                Latest results
               </div>
               <p className="mt-3 text-2xl font-semibold tracking-tight text-ink">{latestScan?.likely_photos_accepted ?? 0}</p>
               <p className="mt-1 text-sm leading-6 text-black/58">{latestRunPhotosHint}</p>
@@ -557,7 +680,7 @@ export function DashboardPage() {
       </ModalShell>
 
       <ModalShell
-        description="This clears only app-managed indexed data and generated browser copies. Original source files remain on disk unchanged, and the gallery stays empty until you explicitly run another scan."
+        description="This clears indexed scan data and generated previews. Original source files stay untouched."
         eyebrow="Clear indexed data"
         isOpen={isClearConfirmOpen}
         onClose={() => setIsClearConfirmOpen(false)}
@@ -565,7 +688,7 @@ export function DashboardPage() {
       >
         <div className="space-y-4">
           <div className="rounded-[24px] border border-black/8 bg-white/72 p-4 text-sm leading-6 text-black/65">
-            Indexed photo records, scan history, persisted diagnostics, and generated browser copies such as thumbnails and display WEBP files will be removed. Originals are never modified or deleted.
+            Scan history, indexed records, and generated previews will be removed. Originals are never modified or deleted.
           </div>
           <div className="flex justify-end gap-2">
             <Button onClick={() => setIsClearConfirmOpen(false)} type="button" variant="ghost">
@@ -579,7 +702,7 @@ export function DashboardPage() {
       </ModalShell>
 
       <ModalShell
-        description="This clears only app-managed indexed state: photo records, scan history, run associations, persisted scan diagnostics, and generated media previews. Your original files on disk are not deleted."
+        description="This resets indexed scan state, then starts a clean evaluation run. Your original files stay untouched."
         eyebrow="Fresh evaluation"
         isOpen={isFreshRunConfirmOpen}
         onClose={() => setIsFreshRunConfirmOpen(false)}
@@ -587,7 +710,7 @@ export function DashboardPage() {
       >
         <div className="space-y-4">
           <div className="rounded-[24px] border border-black/8 bg-white/72 p-4 text-sm leading-6 text-black/65">
-            The next run will stop automatically after 20 likely photos are accepted or 2000 candidate images are evaluated. Search and classification data will be rebuilt from originals, while the browser will receive newly generated stripped display variants.
+            Use this when you want a clean pass without carrying forward previous indexed results.
           </div>
           <div className="flex justify-end gap-2">
             <Button onClick={() => setIsFreshRunConfirmOpen(false)} type="button" variant="ghost">

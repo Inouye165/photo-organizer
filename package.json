@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "start:local": "node scripts/start-local.mjs",
+    "stop:local": "node scripts/stop-local.mjs",
+    "validate:agent-tools": "node scripts/validate-agent-tools.mjs",
+    "test:agent-tools": "node --test scripts/validate-agent-tools.test.mjs",
     "lint": "powershell -NoProfile -Command \"Push-Location server; ..\\.venv\\Scripts\\python.exe -m ruff check app tests; Pop-Location; Push-Location client; npm run lint; Pop-Location\"",
     "test": "powershell -NoProfile -Command \"Push-Location server; ..\\.venv\\Scripts\\python.exe -m pytest -q; Pop-Location; Push-Location client; npm run test; Pop-Location\"",
     "typecheck": "powershell -NoProfile -Command \"Push-Location client; npm run typecheck; Pop-Location\"",

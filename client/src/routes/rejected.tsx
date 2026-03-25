@@ -10,6 +10,14 @@ import { getScanErrors } from "@/lib/api";
 
 const pageSize = 50;
 
+function buildScanErrorParams(page: number, pageSizeValue: number, scanRunId?: number) {
+  return {
+    page,
+    page_size: pageSizeValue,
+    ...(scanRunId != null ? { scan_run_id: scanRunId } : {}),
+  };
+}
+
 export function RejectedFilesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentPage = Number(searchParams.get("page") ?? "1");
@@ -18,11 +26,7 @@ export function RejectedFilesPage() {
   const errorsQuery = useQuery({
     queryKey: ["scan-errors", { scanRunId, page: currentPage }],
     queryFn: () =>
-      getScanErrors({
-        scan_run_id: scanRunId ? Number(scanRunId) : undefined,
-        page: currentPage,
-        page_size: pageSize,
-      }),
+      getScanErrors(buildScanErrorParams(currentPage, pageSize, scanRunId ? Number(scanRunId) : undefined)),
   });
 
   const totalPages = Math.max(
