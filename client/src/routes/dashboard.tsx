@@ -26,6 +26,31 @@ function normalizeSearchValue(value: string | null) {
   return value ?? "";
 }
 
+function buildPhotoListParams(
+  pageSize: number,
+  filters: {
+    dateFrom?: string;
+    dateTo?: string;
+    scanRunId?: number;
+  } = {},
+) {
+  return {
+    page: 1,
+    page_size: pageSize,
+    ...(filters.dateFrom ? { date_from: filters.dateFrom } : {}),
+    ...(filters.dateTo ? { date_to: filters.dateTo } : {}),
+    ...(filters.scanRunId != null ? { scan_run_id: filters.scanRunId } : {}),
+  };
+}
+
+function buildScanErrorParams(pageSize: number, scanRunId?: number) {
+  return {
+    page: 1,
+    page_size: pageSize,
+    ...(scanRunId != null ? { scan_run_id: scanRunId } : {}),
+  };
+}
+
 export function DashboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
@@ -70,12 +95,7 @@ export function DashboardPage() {
   const galleryQuery = useQuery({
     queryKey: ["photos", { dateFrom, dateTo }],
     queryFn: () =>
-      getPhotos({
-        page: 1,
-        page_size: galleryPageSize,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      }),
+      getPhotos(buildPhotoListParams(galleryPageSize, { dateFrom, dateTo })),
   });
 
   const detailQuery = useQuery({
@@ -93,12 +113,7 @@ export function DashboardPage() {
   const filteredPhotosModalQuery = useQuery({
     queryKey: ["photos-modal", "filtered", { dateFrom, dateTo, filteredPhotosPageSize }],
     queryFn: () =>
-      getPhotos({
-        page: 1,
-        page_size: filteredPhotosPageSize,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      }),
+      getPhotos(buildPhotoListParams(filteredPhotosPageSize, { dateFrom, dateTo })),
     enabled: isFilteredPhotosOpen,
   });
 
@@ -108,22 +123,19 @@ export function DashboardPage() {
   const selectedRunPhotosModalQuery = useQuery({
     queryKey: ["photos-modal", "run", selectedRunId, runPhotosPageSize],
     queryFn: () =>
-      getPhotos({
-        page: 1,
-        page_size: runPhotosPageSize,
-        scan_run_id: selectedRunId ?? undefined,
-      }),
+      getPhotos(
+        buildPhotoListParams(
+          runPhotosPageSize,
+          selectedRunId != null ? { scanRunId: selectedRunId } : {},
+        ),
+      ),
     enabled: isRunPhotosOpen && selectedRunId != null,
   });
 
   const scanErrorsQuery = useQuery({
     queryKey: ["scan-errors-modal", selectedRunId, runErrorsPageSize],
     queryFn: () =>
-      getScanErrors({
-        scan_run_id: selectedRunId ?? undefined,
-        page: 1,
-        page_size: runErrorsPageSize,
-      }),
+      getScanErrors(buildScanErrorParams(runErrorsPageSize, selectedRunId ?? undefined)),
     enabled: isRunErrorsOpen && selectedRunId != null,
   });
 

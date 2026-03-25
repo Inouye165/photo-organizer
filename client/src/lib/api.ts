@@ -138,10 +138,29 @@ export type PhotoListParams = {
   scan_run_id?: number;
 };
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+function resolveApiBaseUrl() {
+  const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+  if (configuredBaseUrl) {
+    return configuredBaseUrl.endsWith("/") ? configuredBaseUrl : `${configuredBaseUrl}/`;
+  }
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}/`;
+  }
+  return "http://127.0.0.1/";
+}
+
+const apiBaseUrl = resolveApiBaseUrl();
 
 function toApiUrl(pathname: string) {
   return new URL(pathname, apiBaseUrl).toString();
+}
+
+function buildJsonHeaders(headers?: HeadersInit) {
+  const requestHeaders = new Headers(headers);
+  if (!requestHeaders.has("Accept")) {
+    requestHeaders.set("Accept", "application/json");
+  }
+  return requestHeaders;
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -150,6 +169,15 @@ async function readJson<T>(response: Response): Promise<T> {
     throw new Error(message || `Request failed with status ${response.status}`);
   }
   return (await response.json()) as T;
+}
+
+async function requestJson<T>(pathname: string, init: RequestInit = {}) {
+  const response = await fetch(toApiUrl(pathname), {
+    credentials: "include",
+    ...init,
+    headers: buildJsonHeaders(init.headers),
+  });
+  return readJson<T>(response);
 }
 
 export function resolveApiAssetUrl(pathname: string | null) {
@@ -163,31 +191,28 @@ export function resolveApiAssetUrl(pathname: string | null) {
 }
 
 export async function getLatestScanRun() {
-  const response = await fetch(toApiUrl("/api/scan-runs/latest"));
-  return readJson<LatestScanRunResponse>(response);
+  return requestJson<LatestScanRunResponse>("/api/scan-runs/latest");
 }
 
 export async function getDiscoveryPlan() {
-  const response = await fetch(toApiUrl("/api/scan-runs/discovery-plan"));
-  return readJson<DiscoveryPlanResponse>(response);
+  return requestJson<DiscoveryPlanResponse>("/api/scan-runs/discovery-plan");
 }
 
 export async function startScanRun(request: StartScanRunRequest = {}) {
-  const response = await fetch(toApiUrl("/api/scan-runs"), {
+  return requestJson<ScanRun>("/api/scan-runs", {
     method: "POST",
     headers: {
+      Accept: "application/json",
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ mode: request.mode ?? "full" }),
   });
-  return readJson<ScanRun>(response);
 }
 
 export async function resetScanState() {
-  const response = await fetch(toApiUrl("/api/scan-runs/reset"), {
+  return requestJson<ResetIndexStateResponse>("/api/scan-runs/reset", {
     method: "POST",
   });
-  return readJson<ResetIndexStateResponse>(response);
 }
 
 export async function getScanRuns(params: ScanRunListParams) {
@@ -216,8 +241,7 @@ export async function getPhotos(params: PhotoListParams) {
 }
 
 export async function getPhoto(photoId: number) {
-  const response = await fetch(toApiUrl(`/api/photos/${photoId}`));
-  return readJson<PhotoDetail>(response);
+  return requestJson<PhotoDetail>(`/api/photos/${photoId}`);
 }
 
 export async function getScanErrors(params: ScanErrorListParams) {

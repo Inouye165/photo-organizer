@@ -12,6 +12,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.services.discovery_strategy import build_discovery_plan
 
+DEFAULT_DATABASE_URL = "sqlite:///./photo-organizer.db"
+
 
 class Settings(BaseSettings):
     """Runtime configuration for the API and scanning services."""
@@ -24,15 +26,21 @@ class Settings(BaseSettings):
 
     app_name: str = "Photo Organizer"
     api_prefix: str = "/api"
-    database_url: str = Field(
-        default="postgresql+psycopg://photoorganizer:photoorganizer@localhost:5434/photoorganizer"
-    )
+    database_url: str = Field(default=DEFAULT_DATABASE_URL)
     scan_roots: list[Path] = Field(default_factory=list)
     scan_max_photos: int = 10
     generated_media_root: Path = Field(default=Path("./generated-media"))
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    cors_origins: list[str] = Field(default_factory=list)
     thumbnail_size: int = 360
     display_max_edge: int = 1600
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def parse_database_url(cls, value: Any) -> str:
+        """Normalize blank database URLs to the development-safe default."""
+        if value in (None, ""):
+            return DEFAULT_DATABASE_URL
+        return str(value).strip() or DEFAULT_DATABASE_URL
 
     @field_validator("scan_roots", mode="before")
     @classmethod
@@ -52,7 +60,7 @@ class Settings(BaseSettings):
     def parse_cors_origins(cls, value: Any) -> Any:
         """Allow CORS origins to be configured as JSON or a comma-separated string."""
         if value in (None, ""):
-            return ["http://localhost:5173"]
+            return []
         if isinstance(value, str):
             stripped = value.strip()
             if stripped.startswith("["):

@@ -57,8 +57,13 @@ export function ModalShell({
         return;
       }
 
-      const firstElement = focusableElements[0];
-      const lastElement = focusableElements[focusableElements.length - 1];
+      const firstElement = focusableElements.item(0);
+      const lastElement = focusableElements.item(focusableElements.length - 1);
+      if (firstElement == null || lastElement == null) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
 
       if (event.shiftKey && document.activeElement === firstElement) {
         event.preventDefault();
