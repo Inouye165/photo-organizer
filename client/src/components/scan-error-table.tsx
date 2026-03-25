@@ -5,12 +5,15 @@ import type { ScanError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 type ScanErrorTableProps = {
+  canLoadMore?: boolean;
   emptyMessage: string;
   emptyTitle: string;
   errorMessage: string | null;
   errors: ScanError[];
   isError: boolean;
   isLoading: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
   onRetry: () => void;
 };
 
@@ -55,12 +58,15 @@ function metadataLabel(error: ScanError) {
 }
 
 export function ScanErrorTable({
+  canLoadMore = false,
   emptyMessage,
   emptyTitle,
   errorMessage,
   errors,
   isError,
   isLoading,
+  isLoadingMore = false,
+  onLoadMore,
   onRetry,
 }: ScanErrorTableProps) {
   if (isLoading) {
@@ -98,7 +104,8 @@ export function ScanErrorTable({
   }
 
   return (
-    <div className="overflow-hidden rounded-[24px] border border-black/8 bg-white/68">
+    <div className="space-y-4">
+      <div className="overflow-hidden rounded-[24px] border border-black/8 bg-white/68">
       <div className="hidden grid-cols-[minmax(0,2.2fr)_minmax(180px,1fr)_minmax(0,2fr)] gap-4 border-b border-black/8 bg-black/[0.03] px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-black/45 lg:grid">
         <div>File</div>
         <div>Type</div>
@@ -136,6 +143,14 @@ export function ScanErrorTable({
           );
         })}
       </div>
+      </div>
+      {canLoadMore && onLoadMore ? (
+        <div className="flex justify-center">
+          <Button className="h-10 min-w-40" disabled={isLoadingMore} onClick={onLoadMore} type="button" variant="secondary">
+            {isLoadingMore ? "Loading..." : "Load more files"}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, text
+from sqlalchemy import JSON, BigInteger, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -32,6 +32,12 @@ class Photo(Base):
     file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     file_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    classification_label: Mapped[str] = mapped_column(
+        String(32),
+        default="likely_photo",
+        nullable=False,
+    )
+    classification_details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=text("CURRENT_TIMESTAMP"),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,6 +37,7 @@ class PhotoListItem(BaseModel):
     captured_at: datetime | None
     file_modified_at: datetime
     created_at: datetime
+    classification_label: str
     thumbnail_url: str | None = None
     display_url: str | None = None
 
@@ -44,8 +46,10 @@ class PhotoDetail(PhotoListItem):
     """Detailed representation of a single photo."""
 
     original_path: str
+    latest_scan_run_id: int | None
     file_created_at: datetime | None
     content_hash: str | None
+    classification_details: dict[str, Any] | None
     updated_at: datetime
     variants: list[PhotoVariantRead]
 

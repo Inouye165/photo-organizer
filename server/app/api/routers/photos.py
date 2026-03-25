@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc, select
+from sqlalchemy import desc, inspect, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.session import get_db_session
@@ -42,6 +42,7 @@ def serialize_photo(photo: Photo) -> PhotoListItem:
         captured_at=photo.captured_at,
         file_modified_at=photo.file_modified_at,
         created_at=photo.created_at,
+        classification_label=photo.classification_label,
         thumbnail_url=build_variant_url(thumbnail.relative_path) if thumbnail else None,
         display_url=build_variant_url(display.relative_path) if display else None,
     )
@@ -50,6 +51,7 @@ def serialize_photo(photo: Photo) -> PhotoListItem:
 def serialize_photo_detail(photo: Photo) -> PhotoDetail:
     """Serialize a photo into its detail representation."""
     base = serialize_photo(photo)
+    latest_scan_run_id = sessionless_latest_scan_run_id(photo)
     variants = [
         PhotoVariantRead(
             id=variant.id,
@@ -67,10 +69,26 @@ def serialize_photo_detail(photo: Photo) -> PhotoDetail:
     return PhotoDetail(
         **base.model_dump(),
         original_path=photo.original_path,
+        latest_scan_run_id=latest_scan_run_id,
         file_created_at=photo.file_created_at,
         content_hash=photo.content_hash,
+        classification_details=photo.classification_details,
         updated_at=photo.updated_at,
         variants=variants,
+    )
+
+
+def sessionless_latest_scan_run_id(photo: Photo) -> int | None:
+    """Read the newest linked scan run id from an already-loaded relationship-free photo."""
+    session = inspect(photo).session
+    if session is None:
+        return None
+
+    return session.scalar(
+        select(ScanRunPhoto.scan_run_id)
+        .where(ScanRunPhoto.photo_id == photo.id)
+        .order_by(desc(ScanRunPhoto.indexed_at), desc(ScanRunPhoto.scan_run_id))
+        .limit(1)
     )
 
 

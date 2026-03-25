@@ -12,9 +12,12 @@ vi.mock("@/lib/api", async () => {
   return {
     ...actual,
     getLatestScanRun: vi.fn(),
+    getDiscoveryPlan: vi.fn(),
     getPhoto: vi.fn(),
     getPhotos: vi.fn(),
+    resetScanState: vi.fn(),
     getScanErrors: vi.fn(),
+    getScanRuns: vi.fn(),
     startScanRun: vi.fn(),
   };
 });
@@ -32,6 +35,7 @@ const basePhoto = {
   captured_at: new Date("2024-01-05").toISOString(),
   file_modified_at: new Date().toISOString(),
   created_at: new Date().toISOString(),
+  classification_label: "likely_photo",
   thumbnail_url: "/media/photos/1/thumbnail.webp",
   display_url: "/media/photos/1/display_webp.webp",
 };
@@ -59,14 +63,64 @@ function createPhotoDetail() {
   return {
     ...basePhoto,
     original_path: "photos/beach.jpg",
+    latest_scan_run_id: 3,
     file_created_at: null,
     content_hash: null,
+    classification_details: {
+      score: 0.88,
+      reasons: ["Camera EXIF metadata is present."],
+    },
     updated_at: new Date().toISOString(),
     variants: [],
   };
 }
 
 function configureDashboardMocks() {
+  mockedApi.getDiscoveryPlan.mockResolvedValue({
+    plan: {
+      mode: "machine",
+      ordered_roots: ["C:/", "D:/"],
+      tiers: [
+        {
+          name: "Tier 1",
+          description: "Obvious photo folders and import locations visited first.",
+          paths: ["C:/Users/test/Pictures", "D:/DCIM"],
+        },
+        {
+          name: "Tier 2",
+          description: "Common user-content folders that still often contain photos.",
+          paths: ["C:/Users/test/Desktop"],
+        },
+        {
+          name: "Tier 3",
+          description: "Remaining accessible machine roots scanned after higher-probability areas.",
+          paths: ["C:/", "D:/"],
+        },
+      ],
+      excluded_path_categories: [
+        "managed generated media",
+        "project and dependency artifacts",
+        "system directories",
+      ],
+    },
+  });
+  const recentRun = {
+    id: 2,
+    status: "completed",
+    started_at: new Date("2024-02-10T12:00:00.000Z").toISOString(),
+    finished_at: new Date("2024-02-10T12:02:00.000Z").toISOString(),
+    roots_json: ["fixtures"],
+    mode: "full",
+    files_seen: 2,
+    candidate_images_evaluated: 2,
+    photos_indexed: 1,
+    likely_photos_accepted: 1,
+    likely_graphics_rejected: 0,
+    unreadable_failed_count: 0,
+    errors_count: 0,
+    notes: null,
+  };
+
   mockedApi.getLatestScanRun.mockResolvedValue({
     scan_run: {
       id: 3,
@@ -74,11 +128,64 @@ function configureDashboardMocks() {
       started_at: new Date().toISOString(),
       finished_at: new Date().toISOString(),
       roots_json: ["fixtures"],
+      mode: "evaluation",
       files_seen: 4,
+      candidate_images_evaluated: 4,
       photos_indexed: 2,
+      likely_photos_accepted: 2,
+      likely_graphics_rejected: 1,
+      unreadable_failed_count: 1,
       errors_count: 1,
       notes: "broken.jpg: corrupt image",
     },
+  });
+  mockedApi.getScanRuns.mockResolvedValue({
+    items: [
+      {
+        id: 3,
+        status: "completed_with_errors",
+        started_at: new Date("2024-02-20T10:00:00.000Z").toISOString(),
+        finished_at: new Date("2024-02-20T10:03:00.000Z").toISOString(),
+        roots_json: ["fixtures"],
+        mode: "evaluation",
+        files_seen: 4,
+        candidate_images_evaluated: 4,
+        photos_indexed: 2,
+        likely_photos_accepted: 2,
+        likely_graphics_rejected: 1,
+        unreadable_failed_count: 1,
+        errors_count: 1,
+        notes: "broken.jpg: corrupt image",
+      },
+      recentRun,
+    ],
+    total: 2,
+    page: 1,
+    page_size: 6,
+  });
+  mockedApi.resetScanState.mockResolvedValue({
+    photos_deleted: 2,
+    variants_deleted: 4,
+    scan_run_photos_deleted: 2,
+    scan_errors_deleted: 1,
+    scan_runs_deleted: 2,
+    media_files_deleted: 4,
+  });
+  mockedApi.startScanRun.mockResolvedValue({
+    id: 4,
+    status: "completed",
+    started_at: new Date("2024-02-20T10:05:00.000Z").toISOString(),
+    finished_at: new Date("2024-02-20T10:07:00.000Z").toISOString(),
+    roots_json: ["fixtures"],
+    mode: "evaluation",
+    files_seen: 6,
+    candidate_images_evaluated: 6,
+    photos_indexed: 3,
+    likely_photos_accepted: 3,
+    likely_graphics_rejected: 2,
+    unreadable_failed_count: 1,
+    errors_count: 3,
+    notes: null,
   });
   mockedApi.getPhoto.mockResolvedValue(createPhotoDetail());
   mockedApi.getScanErrors.mockResolvedValue({
@@ -144,8 +251,13 @@ afterEach(() => {
 describe("DashboardPage", () => {
   it("renders the compact product header copy", async () => {
     mockedApi.getLatestScanRun.mockResolvedValue({ scan_run: null });
+    mockedApi.getDiscoveryPlan.mockResolvedValue({
+      plan: { mode: "configured", ordered_roots: [], tiers: [], excluded_path_categories: [] },
+    });
+    mockedApi.getScanRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 6 });
     mockedApi.getPhotos.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 });
     mockedApi.getScanErrors.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50 });
+    mockedApi.resetScanState.mockResolvedValue({ photos_deleted: 0, variants_deleted: 0, scan_run_photos_deleted: 0, scan_errors_deleted: 0, scan_runs_deleted: 0, media_files_deleted: 0 });
     mockedApi.getPhoto.mockRejectedValue(new Error("No detail"));
 
     renderDashboard();
@@ -158,22 +270,32 @@ describe("DashboardPage", () => {
 
   it("renders the main controls row", async () => {
     mockedApi.getLatestScanRun.mockResolvedValue({ scan_run: null });
+    mockedApi.getDiscoveryPlan.mockResolvedValue({
+      plan: { mode: "configured", ordered_roots: [], tiers: [], excluded_path_categories: [] },
+    });
+    mockedApi.getScanRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 6 });
     mockedApi.getPhotos.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 });
     mockedApi.getScanErrors.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50 });
+    mockedApi.resetScanState.mockResolvedValue({ photos_deleted: 0, variants_deleted: 0, scan_run_photos_deleted: 0, scan_errors_deleted: 0, scan_runs_deleted: 0, media_files_deleted: 0 });
     mockedApi.getPhoto.mockRejectedValue(new Error("No detail"));
 
     renderDashboard();
 
     expect(await screen.findByTestId("controls-row")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run scan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run full library scan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear indexed data" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start fresh evaluation" })).toBeInTheDocument();
     expect(screen.getByLabelText("Date from")).toBeInTheDocument();
     expect(screen.getByLabelText("Date to")).toBeInTheDocument();
   });
 
   it("renders a loading state while gallery data is pending", () => {
     mockedApi.getLatestScanRun.mockReturnValue(new Promise(() => undefined));
+    mockedApi.getDiscoveryPlan.mockReturnValue(new Promise(() => undefined));
+    mockedApi.getScanRuns.mockReturnValue(new Promise(() => undefined));
     mockedApi.getPhotos.mockReturnValue(new Promise(() => undefined));
     mockedApi.getScanErrors.mockReturnValue(new Promise(() => undefined));
+    mockedApi.resetScanState.mockResolvedValue({ photos_deleted: 0, variants_deleted: 0, scan_run_photos_deleted: 0, scan_errors_deleted: 0, scan_runs_deleted: 0, media_files_deleted: 0 });
     mockedApi.getPhoto.mockResolvedValue(createPhotoDetail());
 
     renderDashboard();
@@ -183,8 +305,13 @@ describe("DashboardPage", () => {
 
   it("renders an empty state when the backend returns no photos", async () => {
     mockedApi.getLatestScanRun.mockResolvedValue({ scan_run: null });
+    mockedApi.getDiscoveryPlan.mockResolvedValue({
+      plan: { mode: "configured", ordered_roots: [], tiers: [], excluded_path_categories: [] },
+    });
+    mockedApi.getScanRuns.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 6 });
     mockedApi.getPhotos.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 24 });
     mockedApi.getScanErrors.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50 });
+    mockedApi.resetScanState.mockResolvedValue({ photos_deleted: 0, variants_deleted: 0, scan_run_photos_deleted: 0, scan_errors_deleted: 0, scan_runs_deleted: 0, media_files_deleted: 0 });
     mockedApi.getPhoto.mockRejectedValue(new Error("No detail"));
 
     renderDashboard();
@@ -198,7 +325,12 @@ describe("DashboardPage", () => {
     renderDashboard();
 
     expect(await screen.findByText("beach.jpg")).toBeInTheDocument();
-    expect(screen.getByText("Indexed photos")).toBeInTheDocument();
+    expect(screen.getAllByText("Indexed library").length).toBeGreaterThan(0);
+    expect(screen.getByText("Scan history")).toBeInTheDocument();
+    expect(screen.getByText("Run #3")).toBeInTheDocument();
+    expect(screen.getByText("evaluation")).toBeInTheDocument();
+    expect(screen.getByTestId("discovery-plan-card")).toBeInTheDocument();
+    expect(screen.getByText("Priority-first traversal with explainable exclusions.")).toBeInTheDocument();
   });
 
   it("renders the all-photos overlay from route state", async () => {
@@ -207,20 +339,20 @@ describe("DashboardPage", () => {
     renderDashboard(["/?panel=all"]);
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("All indexed photos")).toBeInTheDocument();
+    expect(within(dialog).getByText("Indexed library")).toBeInTheDocument();
     expect(await within(dialog).findByText("beach.jpg")).toBeInTheDocument();
     await waitFor(() => {
       expect(mockedApi.getPhotos).toHaveBeenCalledWith({ page: 1, page_size: 60 });
     });
   });
 
-  it("renders the latest-run overlay with real query context", async () => {
+  it("renders a selected run photo overlay with real query context", async () => {
     configureDashboardMocks();
 
-    renderDashboard(["/?dateFrom=2024-02-01&dateTo=2024-02-29&panel=latest-run"]);
+    renderDashboard(["/?dateFrom=2024-02-01&dateTo=2024-02-29&panel=run-photos&runId=3"]);
 
     const latestRunDialog = await screen.findByRole("dialog");
-    expect(within(latestRunDialog).getByText("Latest run successful photos")).toBeInTheDocument();
+    expect(within(latestRunDialog).getByText("Run #3 accepted likely photos")).toBeInTheDocument();
     expect(await within(latestRunDialog).findByText("mountain.png")).toBeInTheDocument();
 
     await waitFor(() => {
@@ -228,16 +360,29 @@ describe("DashboardPage", () => {
     });
   });
 
-  it("renders the latest-scan error overlay with real query context", async () => {
+  it("renders a selected run error overlay with real query context", async () => {
     configureDashboardMocks();
 
-    renderDashboard(["/?dateFrom=2024-02-01&dateTo=2024-02-29&panel=errors"]);
+    renderDashboard(["/?dateFrom=2024-02-01&dateTo=2024-02-29&panel=run-errors&runId=3"]);
 
     const errorDialog = await screen.findByRole("dialog");
-    expect(within(errorDialog).getByText("Failed and rejected files")).toBeInTheDocument();
+    expect(within(errorDialog).getByText("Run #3 failed and rejected files")).toBeInTheDocument();
     expect(await within(errorDialog).findByText("broken.jpg")).toBeInTheDocument();
     await waitFor(() => {
       expect(mockedApi.getScanErrors).toHaveBeenCalledWith({ scan_run_id: 3, page: 1, page_size: 60 });
+    });
+  });
+
+  it("renders a historical run photo overlay from route state", async () => {
+    configureDashboardMocks();
+
+    renderDashboard(["/?panel=run-photos&runId=2"]);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Run #2 accepted likely photos")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(mockedApi.getPhotos).toHaveBeenCalledWith({ page: 1, page_size: 60, scan_run_id: 2 });
     });
   });
 
@@ -247,7 +392,7 @@ describe("DashboardPage", () => {
     renderDashboard(["/?dateFrom=2024-02-01&dateTo=2024-02-29&panel=filtered"]);
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Date-filtered photos")).toBeInTheDocument();
+    expect(within(dialog).getByText("Filtered library photos")).toBeInTheDocument();
     expect(await within(dialog).findByText("mountain.png")).toBeInTheDocument();
     await waitFor(() => {
       expect(mockedApi.getPhotos).toHaveBeenCalledWith({
@@ -278,6 +423,42 @@ describe("DashboardPage", () => {
 
     expect(onApply).toHaveBeenCalledWith({ dateFrom: "2024-01-01", dateTo: "2024-01-31" });
     expect(onClear).not.toHaveBeenCalled();
+  });
+
+  it("confirms and starts a fresh evaluation run", async () => {
+    configureDashboardMocks();
+
+    renderDashboard();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start fresh evaluation" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Start a genuinely fresh evaluation run")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear state and start evaluation" }));
+
+    await waitFor(() => {
+      expect(mockedApi.resetScanState).toHaveBeenCalledTimes(1);
+      expect(mockedApi.startScanRun).toHaveBeenCalledWith({ mode: "evaluation" });
+    });
+  });
+
+  it("clears indexed data without automatically starting a new scan", async () => {
+    configureDashboardMocks();
+
+    renderDashboard();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Clear indexed data" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Clear indexed data and generated copies")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear indexed data" }));
+
+    await waitFor(() => {
+      expect(mockedApi.resetScanState).toHaveBeenCalledTimes(1);
+      expect(mockedApi.startScanRun).not.toHaveBeenCalled();
+    });
   });
 });
 

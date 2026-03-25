@@ -7,9 +7,11 @@ import sys
 from pathlib import Path
 
 import uvicorn
+from alembic.config import Config
+from alembic.util.exc import CommandError
+from sqlalchemy.exc import SQLAlchemyError
 
 from alembic import command
-from alembic.config import Config
 
 logger = logging.getLogger("start_local_server")
 
@@ -27,11 +29,18 @@ def main() -> None:
     try:
         alembic_config = Config(str(alembic_ini))
         command.upgrade(alembic_config, "head")
-    except Exception:
+    except (CommandError, OSError, SQLAlchemyError):
         logger.exception("Database migration failed")
         sys.exit(1)
 
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000)
+    uvicorn.run(
+        "app.main:create_app",
+        factory=True,
+        host="127.0.0.1",
+        port=8000,
+        reload=True,
+        reload_dirs=[str(server_dir / "app")],
+    )
 
 
 if __name__ == "__main__":

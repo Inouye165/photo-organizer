@@ -16,12 +16,24 @@ function metadataValue(value: string | null) {
   return value && value.length > 0 ? value : "Unavailable";
 }
 
+function classificationReasons(photo: PhotoDetail) {
+  const details = photo.classification_details;
+  if (!details || !Array.isArray(details.reasons)) {
+    return [];
+  }
+  return details.reasons.filter((value): value is string => typeof value === "string");
+}
+
 export function PhotoDetailPanel({ photo, isOpen, onClose }: PhotoDetailPanelProps) {
   if (!isOpen || !photo) {
     return null;
   }
 
   const displayUrl = resolveApiAssetUrl(photo.display_url ?? photo.thumbnail_url);
+  const reasons = classificationReasons(photo);
+  const score = typeof photo.classification_details?.score === "number"
+    ? photo.classification_details.score
+    : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-black/25 p-0 backdrop-blur-sm lg:items-stretch lg:justify-end">
@@ -54,6 +66,29 @@ export function PhotoDetailPanel({ photo, isOpen, onClose }: PhotoDetailPanelPro
             <dt className="text-[11px] font-semibold uppercase tracking-[0.22em] text-black/40">Original path</dt>
             <dd className="mt-1 break-all text-base text-ink">{metadataValue(photo.original_path)}</dd>
           </div>
+          <div>
+            <dt className="text-[11px] font-semibold uppercase tracking-[0.22em] text-black/40">Latest scan run</dt>
+            <dd className="mt-1 text-base text-ink">{photo.latest_scan_run_id != null ? `Run #${photo.latest_scan_run_id}` : "Unavailable"}</dd>
+          </div>
+          <div>
+            <dt className="text-[11px] font-semibold uppercase tracking-[0.22em] text-black/40">Classification</dt>
+            <dd className="mt-1 text-base text-ink">
+              {photo.classification_label.replaceAll("_", " ")}
+              {score != null ? ` (${Math.round(score * 100)}% confidence)` : ""}
+            </dd>
+          </div>
+          {reasons.length > 0 ? (
+            <div>
+              <dt className="text-[11px] font-semibold uppercase tracking-[0.22em] text-black/40">Why it was accepted</dt>
+              <dd className="mt-2 flex flex-wrap gap-2">
+                {reasons.map((reason) => (
+                  <span key={reason} className="rounded-full bg-black/5 px-3 py-1 text-sm text-black/65">
+                    {reason}
+                  </span>
+                ))}
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </aside>
     </div>

@@ -102,6 +102,7 @@ Behavior:
 - if `.env` exists, `start:local` uses it
 - if `PHOTO_ORGANIZER_DATABASE_URL` is unset, `start:local` starts the bundled Docker Compose PostgreSQL service and uses `postgresql+psycopg://photoorganizer:photoorganizer@127.0.0.1:5434/photoorganizer`
 - if `PHOTO_ORGANIZER_POSTGRES_PORT` is unset, the bundled local PostgreSQL container publishes on host port `5434`
+- `start:local` accepts either `docker compose` or `docker-compose`, whichever is installed
 - on Windows, if Docker Desktop is installed but not already running, `start:local` attempts to launch it and waits for the Docker engine before starting PostgreSQL
 - if a local `photo-organizer-postgres` container already exists, `start:local` reuses it instead of failing on a container-name conflict
 - if that existing `photo-organizer-postgres` container was created with different PostgreSQL credentials, `start:local` removes and recreates it so the app can connect cleanly
@@ -111,6 +112,8 @@ Behavior:
 - if `PHOTO_ORGANIZER_SCAN_ROOTS` is not set, it falls back to the bundled fixture photos so the app still opens successfully
 - if `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS` is unset, the backend currently stops each scan after the first `20` accepted photos as a temporary safety guard
 - if you explicitly set `PHOTO_ORGANIZER_DATABASE_URL` to a `sqlite:///...` value, `start:local` respects that and skips PostgreSQL container startup
+- `start:local` waits for the PostgreSQL container health check, backend `/health` payload, and frontend root page before declaring the app ready
+- while running against the bundled PostgreSQL container, `start:local` keeps monitoring container health and database authentication; repeated failures stop the app processes instead of leaving a half-broken session running
 
 ## Run the Backend
 
