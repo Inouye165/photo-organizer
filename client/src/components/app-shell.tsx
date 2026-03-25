@@ -2,8 +2,8 @@ import type { PropsWithChildren } from "react";
 
 export function AppShell({ children }: PropsWithChildren) {
   return (
-    <div className="min-h-screen lg:h-screen lg:overflow-hidden">
-      <header className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4 px-4 pb-3 pt-4 sm:px-6 lg:px-8 lg:pb-4 lg:pt-5">
+    <div className="flex min-h-screen min-h-dvh flex-col overflow-x-clip">
+      <header className="mx-auto flex w-full max-w-7xl shrink-0 items-center justify-between gap-4 px-4 pb-3 pt-4 sm:px-6 lg:px-8 lg:pb-4 lg:pt-5">
         <div className="min-w-0">
           <h1 className="font-serif text-2xl leading-none text-ink sm:text-3xl">Photo Organizer</h1>
           <p className="mt-1 text-sm text-black/60 sm:text-[15px]">
@@ -14,7 +14,7 @@ export function AppShell({ children }: PropsWithChildren) {
           Phase 1
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-3 px-4 pb-4 sm:px-6 lg:min-h-0 lg:px-8 lg:pb-5">
+      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-3 overflow-y-auto px-4 pb-6 sm:px-6 lg:min-h-0 lg:px-8 lg:pb-8">
         {children}
       </main>
     </div>

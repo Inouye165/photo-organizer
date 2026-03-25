@@ -282,6 +282,12 @@ describe("DashboardPage", () => {
     renderDashboard();
 
     expect(await screen.findByTestId("controls-row")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "New Scan" })).toBeInTheDocument();
+    const feedbackPanel = screen.getByTestId("scan-feedback-panel");
+    expect(feedbackPanel).toBeInTheDocument();
+    expect(within(feedbackPanel).getAllByText("Ready to scan").length).toBeGreaterThan(0);
+    expect(within(feedbackPanel).getByText("Scanning...")).toBeInTheDocument();
+    expect(within(feedbackPanel).getByText("Complete")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run full library scan" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear indexed data" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start fresh evaluation" })).toBeInTheDocument();
