@@ -12,9 +12,15 @@ const serverDir = path.join(repoDir, "server");
 const composeFile = path.join(repoDir, "infra", "docker-compose.yml");
 const venvPython = path.join(repoDir, ".venv", "Scripts", "python.exe");
 const bundledPostgresPort = process.env.PHOTO_ORGANIZER_POSTGRES_PORT || "5434";
+const backendHost = "127.0.0.1";
+const backendPort = 8000;
+const frontendHost = "127.0.0.1";
+const frontendPort = 5173;
+const dependencyMonitorIntervalMs = 15000;
+const dependencyFailureLimit = 3;
 
-const backendUrl = "http://127.0.0.1:8000/health";
-const frontendUrl = "http://127.0.0.1:5173/";
+const backendUrl = `http://${backendHost}:${backendPort}/health`;
+const frontendUrl = `http://${frontendHost}:${frontendPort}/`;
 const defaultPostgresUrl = `postgresql+psycopg://photoorganizer:photoorganizer@127.0.0.1:${bundledPostgresPort}/photoorganizer`;
 const postgresContainerName = "photo-organizer-postgres";
 const postgresDataDir = path.join(repoDir, "infra", "postgres-data");
@@ -30,6 +36,24 @@ const dockerDesktopCandidates = [
 ].filter(Boolean);
 
 const children = [];
+let dependencyMonitorTimer = null;
+let dependencyMonitorInFlight = false;
+let dependencyFailureCount = 0;
+let composeInvocationPromise;
+
+async function commandWorks(command, args, options = {}) {
+  try {
+    await runCommand(command, args, {
+      cwd: options.cwd ?? repoDir,
+      env: options.env,
+      stdio: "ignore",
+      shell: options.shell ?? false,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function parseEnvFile(filePath) {
   if (!existsSync(filePath)) {
@@ -72,9 +96,8 @@ function repoRelativeAbsolute(candidate) {
 
 function normalizeScanRoots(rawValue) {
   if (!rawValue) {
-    const fallback = [path.join(serverDir, "tests", "fixtures", "scan_root")];
-    console.warn("[start:local] PHOTO_ORGANIZER_SCAN_ROOTS not set; using bundled fixture photos.");
-    return JSON.stringify(fallback);
+    console.warn("[start:local] PHOTO_ORGANIZER_SCAN_ROOTS not set; backend will use broad machine discovery.");
+    return undefined;
   }
 
   try {
@@ -143,6 +166,31 @@ function buildNpmInvocation(argumentsList) {
     command: "npm",
     args: argumentsList,
   };
+}
+
+async function getDockerComposeInvocation() {
+  if (!composeInvocationPromise) {
+    composeInvocationPromise = (async () => {
+      if (await commandWorks("docker", ["compose", "version"])) {
+        return { command: "docker", argsPrefix: ["compose"] };
+      }
+
+      if (await commandWorks("docker-compose", ["version"])) {
+        return { command: "docker-compose", argsPrefix: [] };
+      }
+
+      throw new Error(
+        "Neither 'docker compose' nor 'docker-compose' is available. Install Docker Desktop or Docker Compose before running start:local.",
+      );
+    })();
+  }
+
+  return composeInvocationPromise;
+}
+
+async function runDockerCompose(args, options = {}) {
+  const invocation = await getDockerComposeInvocation();
+  return runCommand(invocation.command, [...invocation.argsPrefix, ...args], options);
 }
 
 function runCommand(command, args, options = {}) {
@@ -246,6 +294,24 @@ async function waitForUrl(url, label, timeoutMs = 120000) {
   throw new Error(`${label} did not become ready within ${timeoutMs / 1000} seconds`);
 }
 
+async function waitForHttpCondition(url, label, isReady, timeoutMs = 120000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const response = await fetch(url);
+      if (await isReady(response)) {
+        console.log(`[start:local] ${label} is ready at ${url}`);
+        return;
+      }
+    } catch {
+      // Keep polling until timeout.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  throw new Error(`${label} did not become ready within ${timeoutMs / 1000} seconds`);
+}
+
 async function waitForTcpPort(host, port, label, timeoutMs = 120000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -283,6 +349,37 @@ async function dockerEngineReady() {
   } catch {
     return false;
   }
+}
+
+async function getContainerHealth(containerName) {
+  try {
+    const output = await runCommandCapture(
+      "docker",
+      ["inspect", "--format", "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}", containerName],
+      { cwd: repoDir },
+    );
+    return output.trim();
+  } catch {
+    return "missing";
+  }
+}
+
+async function waitForContainerHealth(containerName, label, timeoutMs = 120000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const health = await getContainerHealth(containerName);
+    if (health === "healthy" || health === "running") {
+      console.log(`[start:local] ${label} is healthy.`);
+      return;
+    }
+    if (health === "exited" || health === "dead") {
+      throw new Error(`${label} exited before becoming healthy.`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  throw new Error(`${label} did not become healthy within ${timeoutMs / 1000} seconds`);
 }
 
 function findDockerDesktopExecutable() {
@@ -340,6 +437,12 @@ async function waitForBundledPostgresAuth(databaseUrl, timeoutMs = 120000) {
 }
 
 async function ensureDockerEngine() {
+  if (!(await commandWorks("docker", ["version"]))) {
+    throw new Error(
+      "Docker CLI is not installed or not on PATH. Install Docker Desktop or set PHOTO_ORGANIZER_DATABASE_URL to a different database before running start:local.",
+    );
+  }
+
   if (await dockerEngineReady()) {
     return;
   }
@@ -400,7 +503,7 @@ async function removeContainer(containerName) {
 async function resetBundledPostgresDataDirectory() {
   console.warn("[start:local] Resetting bundled PostgreSQL data directory to recover from incompatible local credentials.");
   try {
-    await runCommand("docker", ["compose", "-f", composeFile, "down", "--remove-orphans"], {
+    await runDockerCompose(["-f", composeFile, "down", "--remove-orphans"], {
       cwd: repoDir,
       stdio: "ignore",
     });
@@ -500,13 +603,14 @@ async function bringUpBundledPostgresContainer() {
     );
   }
 
-  await runCommand("docker", ["compose", "-f", composeFile, "up", "-d", "postgres"], {
+  await runDockerCompose(["-f", composeFile, "up", "-d", "postgres"], {
     cwd: repoDir,
     env: {
       PHOTO_ORGANIZER_POSTGRES_PORT: bundledPostgresPort,
     },
     stdio: "inherit",
   });
+  await waitForContainerHealth(postgresContainerName, "PostgreSQL container");
   await waitForTcpPort("127.0.0.1", Number.parseInt(bundledPostgresPort, 10), "PostgreSQL");
 }
 
@@ -589,6 +693,10 @@ function shutdown(exitCode = 0) {
     return;
   }
   shuttingDown = true;
+  if (dependencyMonitorTimer) {
+    clearInterval(dependencyMonitorTimer);
+    dependencyMonitorTimer = null;
+  }
   console.log("[start:local] Shutting down...");
   for (const child of children) {
     killChild(child);
@@ -598,6 +706,50 @@ function shutdown(exitCode = 0) {
 
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
+
+function startDependencyMonitor({ usesManagedPostgres, databaseUrl }) {
+  if (!usesManagedPostgres || dependencyMonitorTimer) {
+    return;
+  }
+
+  dependencyMonitorTimer = setInterval(async () => {
+    if (shuttingDown || dependencyMonitorInFlight) {
+      return;
+    }
+
+    dependencyMonitorInFlight = true;
+    try {
+      const health = await getContainerHealth(postgresContainerName);
+      const authOk = await bundledPostgresAcceptsConnections(databaseUrl);
+      if ((health === "healthy" || health === "running") && authOk) {
+        dependencyFailureCount = 0;
+        return;
+      }
+
+      dependencyFailureCount += 1;
+      console.warn(
+        `[start:local] PostgreSQL dependency check failed (${dependencyFailureCount}/${dependencyFailureLimit}). Health=${health}, auth=${authOk ? "ok" : "failed"}.`,
+      );
+
+      if (dependencyFailureCount >= dependencyFailureLimit) {
+        console.error("[start:local] PostgreSQL remained unhealthy. Stopping local app processes.");
+        shutdown(1);
+      }
+    } catch (error) {
+      dependencyFailureCount += 1;
+      console.warn(
+        `[start:local] PostgreSQL dependency monitor error (${dependencyFailureCount}/${dependencyFailureLimit}): ${error.message}`,
+      );
+
+      if (dependencyFailureCount >= dependencyFailureLimit) {
+        console.error("[start:local] PostgreSQL dependency monitoring failed repeatedly. Stopping local app processes.");
+        shutdown(1);
+      }
+    } finally {
+      dependencyMonitorInFlight = false;
+    }
+  }, dependencyMonitorIntervalMs);
+}
 
 async function main() {
   if (!existsSync(serverDir)) {
@@ -644,16 +796,56 @@ async function main() {
     env: backendEnv,
     prefix: "[backend]",
   });
-  await waitForUrl(backendUrl, "Backend");
+  await waitForHttpCondition(
+    backendUrl,
+    "Backend",
+    async (response) => {
+      if (!response.ok) {
+        return false;
+      }
+
+      try {
+        const payload = await response.json();
+        return payload?.status === "ok";
+      } catch {
+        return false;
+      }
+    },
+  );
 
   console.log("[start:local] Starting frontend...");
-  const npmDev = buildNpmInvocation(["run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"]);
+  const npmDev = buildNpmInvocation([
+    "run",
+    "dev",
+    "--",
+    "--host",
+    frontendHost,
+    "--port",
+    String(frontendPort),
+    "--strictPort",
+  ]);
   startManagedProcess(npmDev.command, npmDev.args, {
     cwd: clientDir,
     env: frontendEnv,
     prefix: "[frontend]",
   });
-  await waitForUrl(frontendUrl, "Frontend");
+  await waitForHttpCondition(
+    frontendUrl,
+    "Frontend",
+    async (response) => {
+      if (!response.ok) {
+        return false;
+      }
+
+      const html = await response.text();
+      return html.includes('<div id="root"></div>') || html.includes('<div id="root">');
+    },
+  );
+
+  startDependencyMonitor({
+    usesManagedPostgres: isManagedPostgresUrl(backendEnv.PHOTO_ORGANIZER_DATABASE_URL),
+    databaseUrl: backendEnv.PHOTO_ORGANIZER_DATABASE_URL,
+  });
 
   console.log("[start:local] App ready.");
   console.log(`[start:local] Frontend: ${frontendUrl}`);

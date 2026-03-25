@@ -52,9 +52,10 @@ def prepared_scan_root_fixture(tmp_path: Path) -> Path:
     source_root = Path(__file__).parent / "fixtures" / "scan_root"
     target_root = tmp_path / "scan_root"
     shutil.copytree(source_root, target_root)
+    (target_root / "nested" / "mountain.png").unlink(missing_ok=True)
     create_photo_like_fixture(target_root / "beach.jpg", width=1200, height=800, seed=11)
     create_photo_like_fixture(
-        target_root / "nested" / "mountain.png",
+        target_root / "nested" / "mountain.jpg",
         width=900,
         height=1200,
         seed=29,

@@ -7,6 +7,7 @@ import { PhotoCard } from "@/components/photo-card";
 import { Button } from "@/components/ui/button";
 
 type PhotoCollectionModalProps = {
+  canLoadMore?: boolean;
   count: number;
   description: string;
   emptyMessage: string;
@@ -15,8 +16,10 @@ type PhotoCollectionModalProps = {
   eyebrow: string;
   isError: boolean;
   isLoading: boolean;
+  isLoadingMore?: boolean;
   isOpen: boolean;
   onClose: () => void;
+  onLoadMore?: () => void;
   onRetry: () => void;
   onSelectPhoto: (photoId: number) => void;
   photos: PhotoSummary[];
@@ -24,6 +27,7 @@ type PhotoCollectionModalProps = {
 };
 
 export function PhotoCollectionModal({
+  canLoadMore = false,
   count,
   description,
   emptyMessage,
@@ -32,8 +36,10 @@ export function PhotoCollectionModal({
   eyebrow,
   isError,
   isLoading,
+  isLoadingMore = false,
   isOpen,
   onClose,
+  onLoadMore,
   onRetry,
   onSelectPhoto,
   photos,
@@ -75,11 +81,20 @@ export function PhotoCollectionModal({
           <p className="max-w-xl text-sm leading-6 text-black/55">{emptyMessage}</p>
         </div>
       ) : (
-        <section aria-label={title} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {photos.map((photo) => (
-            <PhotoCard key={photo.id} onSelect={onSelectPhoto} photo={photo} />
-          ))}
-        </section>
+        <div className="space-y-4">
+          <section aria-label={title} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {photos.map((photo) => (
+              <PhotoCard key={photo.id} onSelect={onSelectPhoto} photo={photo} />
+            ))}
+          </section>
+          {canLoadMore && onLoadMore ? (
+            <div className="flex justify-center">
+              <Button className="h-10 min-w-40" disabled={isLoadingMore} onClick={onLoadMore} type="button" variant="secondary">
+                {isLoadingMore ? "Loading..." : "Load more photos"}
+              </Button>
+            </div>
+          ) : null}
+        </div>
       )}
     </ModalShell>
   );

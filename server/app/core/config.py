@@ -10,6 +10,8 @@ from typing import Any, cast
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.services.discovery_strategy import build_discovery_plan
+
 
 class Settings(BaseSettings):
     """Runtime configuration for the API and scanning services."""
@@ -65,10 +67,11 @@ class Settings(BaseSettings):
         return Path(value)
 
     def resolved_scan_roots(self) -> list[Path]:
-        """Return configured scan roots as absolute paths."""
+        """Return configured roots or the default machine-wide discovery roots."""
         self_any = cast(Any, self)
         configured_roots = list(cast(list[Any], self_any.scan_roots))
-        return [Path(str(root)).expanduser().resolve() for root in configured_roots]
+        plan = build_discovery_plan([Path(str(root)) for root in configured_roots])
+        return list(plan.ordered_roots)
 
     def resolved_media_root(self) -> Path:
         """Return the generated media root as an absolute path."""

@@ -1,4 +1,4 @@
-import { type PropsWithChildren, useEffect, useId } from "react";
+import { type PropsWithChildren, useEffect, useId, useRef } from "react";
 import { X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -22,20 +22,59 @@ export function ModalShell({
   title,
 }: ModalShellProps) {
   const titleId = useId();
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const lastFocusedElementRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
       return undefined;
     }
 
+    lastFocusedElementRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialogRef.current?.focus();
+
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         onClose();
+        return;
+      }
+
+      if (event.key !== "Tab" || dialogRef.current == null) {
+        return;
+      }
+
+      const focusableElements = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      lastFocusedElementRef.current?.focus();
+    };
   }, [isOpen, onClose]);
 
   if (!isOpen) {
@@ -49,7 +88,9 @@ export function ModalShell({
         aria-labelledby={titleId}
         aria-modal="true"
         className="relative flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-[28px] border border-white/70 bg-[#fcfaf6] shadow-2xl sm:h-[min(88vh,860px)] sm:rounded-[28px]"
+        ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
       >
         <header className="flex items-start justify-between gap-4 border-b border-black/8 px-5 py-4 sm:px-6">
           <div className="min-w-0">

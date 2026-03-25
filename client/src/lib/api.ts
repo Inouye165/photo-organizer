@@ -28,14 +28,61 @@ export type ScanRun = {
   started_at: string;
   finished_at: string | null;
   roots_json: string[];
+  mode: string;
   files_seen: number;
+  candidate_images_evaluated: number;
   photos_indexed: number;
+  likely_photos_accepted: number;
+  likely_graphics_rejected: number;
+  unreadable_failed_count: number;
   errors_count: number;
   notes: string | null;
 };
 
+export type DiscoveryTier = {
+  name: string;
+  description: string;
+  paths: string[];
+};
+
+export type DiscoveryPlan = {
+  mode: string;
+  ordered_roots: string[];
+  tiers: DiscoveryTier[];
+  excluded_path_categories: string[];
+};
+
+export type DiscoveryPlanResponse = {
+  plan: DiscoveryPlan;
+};
+
 export type LatestScanRunResponse = {
   scan_run: ScanRun | null;
+};
+
+export type ScanRunListResponse = {
+  items: ScanRun[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type ScanRunListParams = {
+  page?: number;
+  page_size?: number;
+};
+
+export type StartScanRunRequest = {
+  mode?: "full" | "evaluation";
+};
+
+export type ResetIndexStateResponse = {
+  photos_deleted: number;
+  variants_deleted: number;
+  scan_run_photos_deleted: number;
+  scan_errors_deleted: number;
+  scan_runs_deleted: number;
+  media_files_deleted: number;
 };
 
 export type PhotoVariant = {
@@ -61,14 +108,17 @@ export type PhotoSummary = {
   captured_at: string | null;
   file_modified_at: string;
   created_at: string;
+  classification_label: string;
   thumbnail_url: string | null;
   display_url: string | null;
 };
 
 export type PhotoDetail = PhotoSummary & {
   original_path: string;
+  latest_scan_run_id: number | null;
   file_created_at: string | null;
   content_hash: string | null;
+  classification_details: Record<string, unknown> | null;
   updated_at: string;
   variants: PhotoVariant[];
 };
@@ -117,11 +167,35 @@ export async function getLatestScanRun() {
   return readJson<LatestScanRunResponse>(response);
 }
 
-export async function startScanRun() {
+export async function getDiscoveryPlan() {
+  const response = await fetch(toApiUrl("/api/scan-runs/discovery-plan"));
+  return readJson<DiscoveryPlanResponse>(response);
+}
+
+export async function startScanRun(request: StartScanRunRequest = {}) {
   const response = await fetch(toApiUrl("/api/scan-runs"), {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ mode: request.mode ?? "full" }),
   });
   return readJson<ScanRun>(response);
+}
+
+export async function resetScanState() {
+  const response = await fetch(toApiUrl("/api/scan-runs/reset"), {
+    method: "POST",
+  });
+  return readJson<ResetIndexStateResponse>(response);
+}
+
+export async function getScanRuns(params: ScanRunListParams) {
+  const url = new URL(toApiUrl("/api/scan-runs"));
+  url.searchParams.set("page", String(params.page ?? 1));
+  url.searchParams.set("page_size", String(params.page_size ?? 8));
+  const response = await fetch(url);
+  return readJson<ScanRunListResponse>(response);
 }
 
 export async function getPhotos(params: PhotoListParams) {

@@ -41,14 +41,16 @@ class VariantService:
             absolute_path.parent.mkdir(parents=True, exist_ok=True)
 
             with Image.open(source_path) as raw_image:
-                image = ImageOps.exif_transpose(raw_image)
-                if image.mode not in ("RGB", "RGBA"):
-                    image = image.convert("RGB")
-                elif image.mode == "RGBA":
-                    image = image.convert("RGB")
-
+                image, icc_profile = _prepare_browser_variant_image(raw_image)
                 image.thumbnail((spec.max_edge, spec.max_edge))
-                image.save(absolute_path, format="WEBP", quality=spec.quality, method=6)
+                save_kwargs = {
+                    "format": "WEBP",
+                    "quality": spec.quality,
+                    "method": 6,
+                }
+                if icc_profile is not None:
+                    save_kwargs["icc_profile"] = icc_profile
+                image.save(absolute_path, **save_kwargs)
 
                 variant = existing_variants.get(spec.kind)
                 if variant is None:
@@ -60,3 +62,33 @@ class VariantService:
                 variant.height = image.height
                 variant.mime_type = "image/webp"
                 variant.file_size_bytes = absolute_path.stat().st_size
+
+
+def _prepare_browser_variant_image(raw_image: Image.Image) -> tuple[Image.Image, bytes | None]:
+    """Create a clean browser-facing image that omits source metadata."""
+    normalized_image = ImageOps.exif_transpose(raw_image)
+    icc_profile = _extract_safe_icc_profile(raw_image, normalized_image)
+    rgb_image = (
+        normalized_image
+        if normalized_image.mode == "RGB"
+        else normalized_image.convert("RGB")
+    )
+    clean_image = Image.frombytes("RGB", rgb_image.size, rgb_image.tobytes())
+
+    if rgb_image is not normalized_image:
+        rgb_image.close()
+    if normalized_image is not raw_image:
+        normalized_image.close()
+
+    return clean_image, icc_profile
+
+
+def _extract_safe_icc_profile(
+    raw_image: Image.Image,
+    normalized_image: Image.Image,
+) -> bytes | None:
+    """Preserve only a safe ICC profile when present; strip all other metadata."""
+    for candidate in (normalized_image.info.get("icc_profile"), raw_image.info.get("icc_profile")):
+        if isinstance(candidate, bytes) and candidate:
+            return candidate
+    return None
