@@ -299,12 +299,15 @@ def test_discovery_plan_endpoint_exposes_broad_machine_strategy(client) -> None:
     assert "system directories" in payload["excluded_path_categories"]
 
 
-def test_scan_stops_after_temporary_twenty_photo_cap(
+def test_scan_stops_after_configured_photo_cap(
     client,
+    monkeypatch,
     prepared_scan_root: Path,
 ) -> None:
-    """The temporary scan cap stops indexing after the first twenty accepted photos."""
+    """The configured scan cap stops indexing after the accepted-photo limit."""
     create_photo_series(prepared_scan_root, count=25)
+    monkeypatch.setenv("PHOTO_ORGANIZER_SCAN_MAX_PHOTOS", "20")
+    get_settings.cache_clear()
 
     scan_response = client.post("/api/scan-runs")
     assert scan_response.status_code == 200

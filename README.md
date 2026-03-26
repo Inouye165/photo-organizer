@@ -51,7 +51,7 @@ Variables:
 
 - `PHOTO_ORGANIZER_DATABASE_URL`: SQLAlchemy database URL. PostgreSQL is the intended local runtime database.
 - `PHOTO_ORGANIZER_SCAN_ROOTS`: JSON array of directories the scanner is allowed to traverse.
-- `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS`: Temporary safety cap for how many accepted photos one scan will index. Set `0` to remove the cap later.
+- `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS`: Safety cap for how many accepted photos one full scan will index. Defaults to `500`. Set `0` to remove the cap.
 - `PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT`: Directory for generated thumbnails and display variants.
 - `PHOTO_ORGANIZER_CORS_ORIGINS`: JSON array of allowed frontend origins.
 - `PHOTO_ORGANIZER_THUMBNAIL_SIZE`: Max edge in pixels for the thumbnail variant.
@@ -64,7 +64,7 @@ Example:
 PHOTO_ORGANIZER_POSTGRES_PORT=5434
 PHOTO_ORGANIZER_DATABASE_URL=postgresql+psycopg://photoorganizer:photoorganizer@localhost:5434/photoorganizer
 PHOTO_ORGANIZER_SCAN_ROOTS=["./sample-photos"]
-PHOTO_ORGANIZER_SCAN_MAX_PHOTOS=20
+PHOTO_ORGANIZER_SCAN_MAX_PHOTOS=500
 PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT=./server/generated-media
 PHOTO_ORGANIZER_CORS_ORIGINS=["http://localhost:5173"]
 PHOTO_ORGANIZER_THUMBNAIL_SIZE=360
@@ -110,7 +110,7 @@ Behavior:
 - if another Docker container already owns the selected bundled PostgreSQL host port, `start:local` stops with a precise conflict message instead of failing later during Compose startup
 - if Docker is unavailable while using that default PostgreSQL configuration, `start:local` exits with a clear error instead of silently switching databases
 - if `PHOTO_ORGANIZER_SCAN_ROOTS` is not set, it falls back to the bundled fixture photos so the app still opens successfully
-- if `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS` is unset, the backend currently stops each scan after the first `20` accepted photos as a temporary safety guard
+- if `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS` is unset, the backend currently stops each full scan after the first `500` accepted photos as a safety guard
 - if you explicitly set `PHOTO_ORGANIZER_DATABASE_URL` to a `sqlite:///...` value, `start:local` respects that and skips PostgreSQL container startup
 - `start:local` waits for the PostgreSQL container health check, backend `/health` payload, and frontend root page before declaring the app ready
 - while running against the bundled PostgreSQL container, `start:local` keeps monitoring container health and database authentication; repeated failures stop the app processes instead of leaving a half-broken session running
@@ -223,7 +223,7 @@ Pop-Location
 
 - The scanner does not traverse arbitrary machine paths. It only scans configured roots.
 - The scan is synchronous. Large libraries will block the request until completion.
-- The scanner currently stops after the first `20` accepted photos per run. This is temporary and is controlled by `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS`.
+- The scanner currently stops after the first `500` accepted photos per full run. This is controlled by `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS`.
 - Existing originals are indexed by `original_path` and updated in place.
 - Exact duplicates are rejected by SHA-256 `content_hash`, and the database enforces uniqueness for non-null hashes.
 - Variants are generated on demand during scan execution and persisted on disk.
@@ -232,12 +232,12 @@ Pop-Location
 
 ## Temporary Scan Cap
 
-To avoid indexing an entire machine or very large libraries during local development, the backend currently stops each scan after indexing the first `20` accepted photos.
+To avoid indexing an entire machine or very large libraries during local development, the backend currently stops each full scan after indexing the first `500` accepted photos.
 
 To change the cap:
 
-- set `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS=50` to index more photos per scan
-- set `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS=0` to remove the cap entirely later
+- set `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS=1000` to index more photos per scan
+- set `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS=0` to remove the cap entirely
 
 The cap only counts photos that pass ingestion checks. Unsupported files, duplicates, videos, rejected graphics, and corrupt files do not count toward the limit.
 

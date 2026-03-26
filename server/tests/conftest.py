@@ -79,7 +79,7 @@ def client(
         "PHOTO_ORGANIZER_SCAN_ROOTS",
         json.dumps([prepared_scan_root.as_posix()]),
     )
-    monkeypatch.setenv("PHOTO_ORGANIZER_SCAN_MAX_PHOTOS", "20")
+    monkeypatch.setenv("PHOTO_ORGANIZER_SCAN_MAX_PHOTOS", "500")
     monkeypatch.setenv("PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT", str(media_root))
     monkeypatch.setenv("PHOTO_ORGANIZER_CORS_ORIGINS", json.dumps(["http://localhost:5173"]))
 
