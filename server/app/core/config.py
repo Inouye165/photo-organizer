@@ -22,6 +22,7 @@ class Settings(BaseSettings):
         env_file="../.env",
         env_prefix="PHOTO_ORGANIZER_",
         extra="ignore",
+        enable_decoding=False,
     )
 
     app_name: str = "Photo Organizer"
@@ -51,7 +52,11 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             stripped = value.strip()
             if stripped.startswith("["):
-                return [Path(item) for item in json.loads(stripped)]
+                try:
+                    parsed = json.loads(stripped)
+                except json.JSONDecodeError:
+                    parsed = json.loads(stripped.replace('""', '"'))
+                return [Path(item) for item in parsed]
             return [Path(item.strip()) for item in stripped.split(",") if item.strip()]
         return value
 
@@ -64,8 +69,11 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             stripped = value.strip()
             if stripped.startswith("["):
-                return json.loads(stripped)
-            return [item.strip() for item in stripped.split(",") if item.strip()]
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    return json.loads(stripped.replace('""', '"'))
+            return [item.strip().strip('"\'') for item in stripped.split(",") if item.strip()]
         return value
 
     @field_validator("generated_media_root", mode="before")

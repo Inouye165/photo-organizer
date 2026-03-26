@@ -382,7 +382,6 @@ def test_discovery_plan_endpoint_exposes_broad_machine_strategy(client) -> None:
     assert payload["tiers"][0]["name"] == "Configured roots"
     assert "system directories" in payload["excluded_path_categories"]
 
-
 def test_scan_stops_after_default_five_hundred_photo_cap(
     client,
     prepared_scan_root: Path,

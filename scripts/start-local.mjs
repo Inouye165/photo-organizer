@@ -217,6 +217,43 @@ function normalizeGeneratedMediaRoot(rawValue) {
   return repoRelativeAbsolute(rawValue || fallback);
 }
 
+function normalizeCorsOrigins(rawValue) {
+  const fallback = ["http://127.0.0.1:5173", "http://localhost:5173"];
+  if (!rawValue) {
+    return JSON.stringify(fallback);
+  }
+
+  const tryParse = (value) => {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === "string")) {
+        return parsed;
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  };
+
+  const trimmed = rawValue.trim();
+  const parsedJson = tryParse(trimmed) ?? tryParse(trimmed.replaceAll('""', '"'));
+  if (parsedJson) {
+    return JSON.stringify(parsedJson);
+  }
+
+  const parsedCsv = trimmed
+    .split(",")
+    .map((entry) => entry.trim().replace(/^['"]+|['"]+$/g, ""))
+    .filter(Boolean);
+  if (parsedCsv.length > 0) {
+    return JSON.stringify(parsedCsv);
+  }
+
+  console.warn("[start:local] PHOTO_ORGANIZER_CORS_ORIGINS was invalid; falling back to local frontend defaults.");
+  return JSON.stringify(fallback);
+}
+
 function normalizeDatabaseUrl(rawValue) {
   const value = rawValue || defaultPostgresUrl;
   if (!value.startsWith("sqlite:///")) {
@@ -776,6 +813,30 @@ async function ensureManagedPostgres(databaseUrl) {
   }
 }
 
+async function runBackendMigrations(env, allowReset = true) {
+  console.log("[start:local] Applying backend migrations...");
+  try {
+    await runCommandCapture(venvPython, ["-m", "alembic", "upgrade", "head"], {
+      cwd: serverDir,
+      env,
+    });
+  } catch (error) {
+    const message = error.message || "";
+    const usesManagedPostgres = isManagedPostgresUrl(env.PHOTO_ORGANIZER_DATABASE_URL);
+    if (allowReset && usesManagedPostgres && message.includes("Can't locate revision identified by")) {
+      console.warn(
+        "[start:local] Bundled PostgreSQL references a missing Alembic revision. Resetting local PostgreSQL data and retrying migrations.",
+      );
+      await resetBundledPostgresDataDirectory();
+      await ensureManagedPostgres(env.PHOTO_ORGANIZER_DATABASE_URL);
+      await runBackendMigrations(env, false);
+      return;
+    }
+
+    throw error;
+  }
+}
+
 function startManagedProcess(command, args, options) {
   const child = spawn(command, args, {
     cwd: options.cwd,
@@ -985,16 +1046,16 @@ async function main() {
 
   const backendEnv = {
     PHOTO_ORGANIZER_DATABASE_URL: databaseUrl,
+    PHOTO_ORGANIZER_MANAGED_START: "1",
     PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT: normalizeGeneratedMediaRoot(
       process.env.PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT ?? fileEnv.PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT,
     ),
     PHOTO_ORGANIZER_SCAN_ROOTS: normalizeScanRoots(
       process.env.PHOTO_ORGANIZER_SCAN_ROOTS ?? fileEnv.PHOTO_ORGANIZER_SCAN_ROOTS,
     ),
-    PHOTO_ORGANIZER_CORS_ORIGINS:
-      process.env.PHOTO_ORGANIZER_CORS_ORIGINS ??
-      fileEnv.PHOTO_ORGANIZER_CORS_ORIGINS ??
-      '["http://127.0.0.1:5173","http://localhost:5173"]',
+    PHOTO_ORGANIZER_CORS_ORIGINS: normalizeCorsOrigins(
+      process.env.PHOTO_ORGANIZER_CORS_ORIGINS ?? fileEnv.PHOTO_ORGANIZER_CORS_ORIGINS,
+    ),
   };
 
   const frontendEnv = {
@@ -1005,6 +1066,7 @@ async function main() {
   recordRunEvent("info", `Database target selected: ${describeDatabaseTarget(backendEnv.PHOTO_ORGANIZER_DATABASE_URL)}.`);
 
   console.log("[start:local] Starting backend...");
+  await runBackendMigrations(backendEnv);
   recordRunEvent("info", `Starting backend health target at ${backendUrl}.`);
   await ensureExpectedHttpService({
     host: backendHost,
@@ -1024,7 +1086,16 @@ async function main() {
       }
     },
     start: () => {
-      startManagedProcess(venvPython, ["scripts/start_local_server.py"], {
+      startManagedProcess(venvPython, [
+        "-m",
+        "uvicorn",
+        "app.main:create_app",
+        "--factory",
+        "--host",
+        backendHost,
+        "--port",
+        String(backendPort),
+      ], {
         cwd: serverDir,
         env: backendEnv,
         prefix: "[backend]",
