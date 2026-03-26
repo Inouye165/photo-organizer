@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { appendFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -6,6 +8,8 @@ import { fileURLToPath } from "node:url";
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const repoDir = path.resolve(rootDir, "..");
 const composeFile = path.join(repoDir, "infra", "docker-compose.yml");
+const runLogPath = path.join(repoDir, "docs", "start-local-results.md");
+const runStatePath = path.join(repoDir, ".local-start-state.json");
 const frontendPort = 5173;
 const backendPort = 8000;
 const postgresContainerName = "photo-organizer-postgres";
@@ -22,6 +26,57 @@ const dockerComposeStandaloneCandidates = [
 
 let dockerCliCommandPromise;
 let composeInvocationPromise;
+
+function logTimestamp() {
+  return new Date().toISOString();
+}
+
+function appendRunLogLine(filePath, line = "") {
+  appendFileSync(filePath, `${line}\n`, "utf8");
+}
+
+function loadActiveRunState() {
+  if (!existsSync(runStatePath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(readFileSync(runStatePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function finalizeActiveRunLog(runState) {
+  if (!runState || runState.finalized) {
+    rmSync(runStatePath, { force: true });
+    return;
+  }
+
+  const targetRunLogPath = typeof runState.runLogPath === "string" && runState.runLogPath.trim().length > 0
+    ? runState.runLogPath
+    : runLogPath;
+  const endedAt = logTimestamp();
+  const hostname = typeof runState.hostname === "string" && runState.hostname.trim().length > 0
+    ? runState.hostname
+    : os.hostname();
+  const details = [
+    `Startup ready state: ${runState.startupReachedReadyState ? "reached" : "not reached"}`,
+    `Frontend target: ${runState.frontendUrl ?? `http://127.0.0.1:${frontendPort}/`}`,
+    `Backend target: ${runState.backendUrl ?? `http://127.0.0.1:${backendPort}/health`}`,
+    `Stop source: npm run stop:local on host ${hostname}`,
+  ];
+
+  appendRunLogLine(targetRunLogPath, `- ${endedAt} | INFO | Stop requested by npm run stop:local.`);
+  appendRunLogLine(targetRunLogPath, `- Ended: ${endedAt}`);
+  appendRunLogLine(targetRunLogPath, "- Outcome: SUCCESS");
+  for (const detail of details) {
+    appendRunLogLine(targetRunLogPath, `- Detail: ${detail}`);
+  }
+  appendRunLogLine(targetRunLogPath);
+
+  rmSync(runStatePath, { force: true });
+}
 
 function escapeForWmi(value) {
   return value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
@@ -354,11 +409,13 @@ async function stopBundledPostgres() {
 }
 
 async function main() {
+  const activeRunState = loadActiveRunState();
   await stopRepoBootstrapProcesses();
   await stopPythonForkWorkers();
   await stopListenersOnPort(frontendPort);
   await stopListenersOnPort(backendPort);
   await stopBundledPostgres();
+  finalizeActiveRunLog(activeRunState);
   console.log("[stop:local] Local services stopped.");
 }
 

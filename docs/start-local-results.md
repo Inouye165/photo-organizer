@@ -42,3 +42,37 @@ Each run records:
 - 2026-03-26T13:53:18.785Z | INFO | Starting backend health target at http://127.0.0.1:8000/health.
 - 2026-03-26T13:53:22.896Z | INFO | Starting frontend target at http://127.0.0.1:5173/.
 - 2026-03-26T13:53:23.951Z | SUCCESS | App ready. Frontend=http://127.0.0.1:5173/; Backend=http://127.0.0.1:8000/health; Database=bundled-postgres:5434.
+## Run 2026-03-26T20:17:46.110Z-pid-37848
+- Started: 2026-03-26T20:17:46.110Z
+- Hostname: Rons-Computer
+- PID: 37848
+- Launcher: npm run start:local
+
+- 2026-03-26T20:17:46.118Z | INFO | Launcher started.
+- 2026-03-26T20:18:08.756Z | INFO | Ensuring bundled PostgreSQL is running on port 5434.
+- 2026-03-26T20:18:45.128Z | WARN | PHOTO_ORGANIZER_SCAN_ROOTS not set; backend will use broad machine discovery.
+- 2026-03-26T20:18:45.130Z | INFO | Database target selected: bundled-postgres:5434.
+- 2026-03-26T20:18:46.893Z | INFO | Starting backend health target at http://127.0.0.1:8000/health.
+- 2026-03-26T20:18:49.078Z | INFO | Starting frontend target at http://127.0.0.1:5173/.
+- 2026-03-26T20:18:51.905Z | SUCCESS | App ready. Frontend=http://127.0.0.1:5173/; Backend=http://127.0.0.1:8000/health; Database=bundled-postgres:5434.
+- 2026-03-26T20:23:12.333Z | ERROR | [frontend] exited unexpectedly with code 1.
+- 2026-03-26T20:23:12.335Z | INFO | Shutting down with exit code 1.
+- Ended: 2026-03-26T20:23:12.337Z
+- Outcome: FAILURE
+- Detail: Startup ready state: reached
+- Detail: Frontend target: http://127.0.0.1:5173/
+- Detail: Backend target: http://127.0.0.1:8000/health
+
+## Run 2026-03-26T20:23:31.800Z-pid-22972
+- Started: 2026-03-26T20:23:31.800Z
+- Hostname: Rons-Computer
+- PID: 22972
+- Launcher: npm run start:local
+
+- 2026-03-26T20:23:31.814Z | INFO | Launcher started.
+- 2026-03-26T20:23:35.058Z | INFO | Ensuring bundled PostgreSQL is running on port 5434.
+- 2026-03-26T20:23:48.718Z | WARN | PHOTO_ORGANIZER_SCAN_ROOTS not set; backend will use broad machine discovery.
+- 2026-03-26T20:23:48.720Z | INFO | Database target selected: bundled-postgres:5434.
+- 2026-03-26T20:23:51.542Z | INFO | Starting backend health target at http://127.0.0.1:8000/health.
+- 2026-03-26T20:23:54.711Z | INFO | Starting frontend target at http://127.0.0.1:5173/.
+- 2026-03-26T20:23:57.167Z | SUCCESS | App ready. Frontend=http://127.0.0.1:5173/; Backend=http://127.0.0.1:8000/health; Database=bundled-postgres:5434.
