@@ -1,4 +1,4 @@
-"""Filesystem scan service for indexing original images and creating variants."""
+"""Filesystem scan service for indexing originals and creating managed assets."""
 
 from __future__ import annotations
 
@@ -479,7 +479,7 @@ class PhotoScannerService:
             diagnostics.update(extra)
         return diagnostics
 
-    def _walk_root(self, root: Path) -> list[Path]:
+    def _walk_root(self, root: Path) -> Iterator[Path]:
         """Safely traverse one configured root without following symlinked directories."""
         root_is_project_workspace = self._looks_like_project_workspace(root)
         home_path = Path.home().expanduser().resolve()
@@ -665,6 +665,9 @@ class PhotoScannerService:
             photo = Photo(original_path=resolved_path.as_posix())
             session.add(photo)
 
+        prior_content_hash = photo.content_hash
+        prior_extension = photo.extension
+
         photo.file_name = resolved_path.name
         photo.extension = resolved_path.suffix.lower()
         photo.mime_type = mime_type
@@ -679,10 +682,20 @@ class PhotoScannerService:
         photo.classification_details = _serialize_classification(classification)
 
         session.flush()
+        managed_original = self.variant_service.ensure_managed_original(
+            photo=photo,
+            source_path=resolved_path,
+            force_refresh=(
+                prior_content_hash != content_hash
+                or prior_extension != photo.extension
+                or photo.managed_original_relative_path is None
+            ),
+        )
         self.variant_service.ensure_variants(
             session=session,
             photo=photo,
-            source_path=resolved_path,
+            source_path=managed_original.absolute_path,
+            force_refresh=managed_original.copied,
         )
         session.flush()
         return photo
