@@ -1,6 +1,6 @@
 # Photo Organizer
 
-Phase 1 delivers the first real vertical slice of a photo organizer with a PostgreSQL-ready FastAPI backend, a React + TypeScript + Vite frontend, filesystem scanning, generated media variants, and an API-driven gallery with no mocked page data.
+Phase 1 delivers the first real vertical slice of a photo organizer with a PostgreSQL-ready FastAPI backend, a React + TypeScript + Vite frontend, filesystem scanning, managed copied originals, generated browser variants, and an API-driven gallery with no mocked page data.
 
 ## Phase 1 Summary
 
@@ -11,6 +11,7 @@ Phase 1 delivers the first real vertical slice of a photo organizer with a Postg
 - PostgreSQL-ready configuration and local Docker Compose support
 - Safe recursive scanning across configured roots only
 - Indexing of supported image types: `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif`, `.bmp`, `.tiff`, `.heic`, `.heif`
+- Real managed-original copying for accepted photos
 - Real thumbnail generation
 - Real display-sized WebP generation
 - Real API-driven gallery with date filtering
@@ -51,8 +52,8 @@ Variables:
 
 - `PHOTO_ORGANIZER_DATABASE_URL`: SQLAlchemy database URL. PostgreSQL is the intended local runtime database.
 - `PHOTO_ORGANIZER_SCAN_ROOTS`: JSON array of directories the scanner is allowed to traverse.
-- `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS`: Safety cap for how many accepted photos one full scan will index. Defaults to `500`. Set `0` to remove the cap.
-- `PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT`: Directory for generated thumbnails and display variants.
+- `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS`: Safety cap for how many accepted photos one scan will index. Defaults to `500`. Set `0` to remove the cap later.
+- `PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT`: Root directory for app-managed copied originals plus generated browser variants.
 - `PHOTO_ORGANIZER_CORS_ORIGINS`: JSON array of allowed frontend origins.
 - `PHOTO_ORGANIZER_THUMBNAIL_SIZE`: Max edge in pixels for the thumbnail variant.
 - `PHOTO_ORGANIZER_DISPLAY_MAX_EDGE`: Max edge in pixels for the display WebP variant.
@@ -97,6 +98,12 @@ What it does:
 - starts the FastAPI backend on `http://127.0.0.1:8000`
 - starts the Vite frontend on `http://127.0.0.1:5173`
 
+Operational log:
+
+- every `npm run start:local` run appends a timestamped Markdown entry to `docs/start-local-results.md`
+- each entry includes hostname, PID, success or failure outcome, and notable startup or monitoring issues
+- this gives you one growing log you can review over time across different machines
+
 Behavior:
 
 - if `.env` exists, `start:local` uses it
@@ -110,10 +117,11 @@ Behavior:
 - if another Docker container already owns the selected bundled PostgreSQL host port, `start:local` stops with a precise conflict message instead of failing later during Compose startup
 - if Docker is unavailable while using that default PostgreSQL configuration, `start:local` exits with a clear error instead of silently switching databases
 - if `PHOTO_ORGANIZER_SCAN_ROOTS` is not set, it falls back to the bundled fixture photos so the app still opens successfully
-- if `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS` is unset, the backend currently stops each full scan after the first `500` accepted photos as a safety guard
+- if `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS` is unset, the backend currently stops each scan after the first `500` accepted photos as a safety guard
 - if you explicitly set `PHOTO_ORGANIZER_DATABASE_URL` to a `sqlite:///...` value, `start:local` respects that and skips PostgreSQL container startup
 - `start:local` waits for the PostgreSQL container health check, backend `/health` payload, and frontend root page before declaring the app ready
 - while running against the bundled PostgreSQL container, `start:local` keeps monitoring container health and database authentication; repeated failures stop the app processes instead of leaving a half-broken session running
+- `start:local` records startup success, process failures, dependency-monitor warnings, and final shutdown outcome in `docs/start-local-results.md`
 
 ## Run the Backend
 
@@ -139,7 +147,7 @@ Push-Location server
 Pop-Location
 ```
 
-Generated media is served from `/media/...` and API routes are under `/api/...`.
+App-managed copied originals and generated browser variants are served from `/media/...`, and API routes are under `/api/...`.
 
 ## Run the Frontend
 
@@ -223,23 +231,33 @@ Pop-Location
 
 - The scanner does not traverse arbitrary machine paths. It only scans configured roots.
 - The scan is synchronous. Large libraries will block the request until completion.
-- The scanner currently stops after the first `500` accepted photos per full run. This is controlled by `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS`.
+- The scanner currently stops after the first `500` accepted photos per run by default, and `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS` still overrides that value.
 - Existing originals are indexed by `original_path` and updated in place.
+- Existing originals are never modified in place by the app.
+- Each accepted photo is copied into app-managed storage before downstream processing.
 - Exact duplicates are rejected by SHA-256 `content_hash`, and the database enforces uniqueness for non-null hashes.
-- Variants are generated on demand during scan execution and persisted on disk.
+- Browser-facing variants are generated on demand from the managed original and persisted on disk as WebP derivatives.
 - `photo_variants.kind` is constrained to the supported Phase 1 values: `thumbnail` and `display_webp`.
 - Metadata extraction prefers EXIF capture time and falls back to the file modified time.
 
 ## Temporary Scan Cap
 
-To avoid indexing an entire machine or very large libraries during local development, the backend currently stops each full scan after indexing the first `500` accepted photos.
+To avoid indexing an entire machine or very large libraries during local development, the backend currently stops each scan after indexing the first `500` accepted photos by default.
 
 To change the cap:
 
-- set `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS=1000` to index more photos per scan
-- set `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS=0` to remove the cap entirely
+- set `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS=50` to index fewer photos per scan when you want a tighter dev loop
+- set `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS=0` to remove the cap entirely later
 
 The cap only counts photos that pass ingestion checks. Unsupported files, duplicates, videos, rejected graphics, and corrupt files do not count toward the limit.
+
+## Storage Contract
+
+- The app never modifies the user’s source originals.
+- Every accepted photo keeps its source `original_path` in the database.
+- Every accepted photo is copied into app-managed storage as an immutable managed original.
+- Browser UI reads generated WebP derivatives, not the copied original.
+- The managed original is the authoritative app-owned source for future work such as re-derivation, metadata reprocessing, and embeddings.
 
 ## Recommended Next Steps for Phase 2
 

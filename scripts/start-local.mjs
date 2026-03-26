@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -18,6 +19,10 @@ const frontendHost = "127.0.0.1";
 const frontendPort = 5173;
 const dependencyMonitorIntervalMs = 15000;
 const dependencyFailureLimit = 3;
+const runLogPath = path.join(repoDir, "docs", "start-local-results.md");
+const runSessionStartedAt = new Date();
+const runSessionId = `${runSessionStartedAt.toISOString()}-pid-${process.pid}`;
+const runHostname = os.hostname();
 
 const backendUrl = `http://${backendHost}:${backendPort}/health`;
 const frontendUrl = `http://${frontendHost}:${frontendPort}/`;
@@ -52,6 +57,73 @@ let dependencyMonitorInFlight = false;
 let dependencyFailureCount = 0;
 let composeInvocationPromise;
 let dockerCliCommandPromise;
+let startupReachedReadyState = false;
+let runOutcomeRecorded = false;
+
+function logTimestamp() {
+  return new Date().toISOString();
+}
+
+function ensureRunLogFile() {
+  mkdirSync(path.dirname(runLogPath), { recursive: true });
+  if (!existsSync(runLogPath)) {
+    appendFileSync(
+      runLogPath,
+      "# Local Start Results\n\nThis file is appended automatically by `npm run start:local`. Each run records timestamps, hostname, outcome, and notable issues observed by the launcher.\n\n",
+      "utf8",
+    );
+  }
+}
+
+function appendRunLogLine(line = "") {
+  ensureRunLogFile();
+  appendFileSync(runLogPath, `${line}\n`, "utf8");
+}
+
+function recordRunEvent(level, message) {
+  appendRunLogLine(`- ${logTimestamp()} | ${level.toUpperCase()} | ${message}`);
+}
+
+function startRunLog() {
+  appendRunLogLine(`## Run ${runSessionId}`);
+  appendRunLogLine(`- Started: ${runSessionStartedAt.toISOString()}`);
+  appendRunLogLine(`- Hostname: ${runHostname}`);
+  appendRunLogLine(`- PID: ${process.pid}`);
+  appendRunLogLine(`- Launcher: npm run start:local`);
+  appendRunLogLine();
+  recordRunEvent("info", "Launcher started.");
+}
+
+function finalizeRunLog(status, details = []) {
+  if (runOutcomeRecorded) {
+    return;
+  }
+
+  runOutcomeRecorded = true;
+  appendRunLogLine(`- Ended: ${logTimestamp()}`);
+  appendRunLogLine(`- Outcome: ${status}`);
+  for (const detail of details) {
+    appendRunLogLine(`- Detail: ${detail}`);
+  }
+  appendRunLogLine();
+}
+
+function describeDatabaseTarget(databaseUrl) {
+  if (isManagedPostgresUrl(databaseUrl)) {
+    return `bundled-postgres:${bundledPostgresPort}`;
+  }
+
+  if (databaseUrl.startsWith("sqlite:///")) {
+    return "sqlite";
+  }
+
+  try {
+    const parsed = new URL(databaseUrl);
+    return `${parsed.protocol}//${parsed.hostname || "unknown"}${parsed.port ? `:${parsed.port}` : ""}`;
+  } catch {
+    return "custom-database";
+  }
+}
 
 async function commandWorks(command, args, options = {}) {
   try {
@@ -123,6 +195,7 @@ function repoRelativeAbsolute(candidate) {
 function normalizeScanRoots(rawValue) {
   if (!rawValue) {
     console.warn("[start:local] PHOTO_ORGANIZER_SCAN_ROOTS not set; backend will use broad machine discovery.");
+    recordRunEvent("warn", "PHOTO_ORGANIZER_SCAN_ROOTS not set; backend will use broad machine discovery.");
     return undefined;
   }
 
@@ -334,6 +407,7 @@ function runCommandCapture(command, args, options = {}) {
 async function ensurePythonEnvironment() {
   if (!existsSync(venvPython)) {
     console.log("[start:local] Creating Python virtual environment...");
+    recordRunEvent("info", "Creating Python virtual environment.");
     await runCommand("python", ["-m", "venv", ".venv"], { cwd: repoDir });
   }
 
@@ -350,6 +424,7 @@ async function ensurePythonEnvironment() {
 
   if (!hasBackendDeps) {
     console.log("[start:local] Installing backend dependencies...");
+    recordRunEvent("info", "Installing backend dependencies.");
     await runCommand(venvPython, ["-m", "pip", "install", "-e", "./server[dev]"], { cwd: repoDir });
   }
 }
@@ -357,6 +432,7 @@ async function ensurePythonEnvironment() {
 async function ensureFrontendDependencies() {
   if (!existsSync(path.join(clientDir, "node_modules"))) {
     console.log("[start:local] Installing frontend dependencies...");
+    recordRunEvent("info", "Installing frontend dependencies.");
     const npmInstall = buildNpmInvocation(["install"]);
     await runCommand(npmInstall.command, npmInstall.args, { cwd: clientDir });
   }
@@ -707,6 +783,7 @@ async function bringUpBundledPostgresContainer() {
 async function ensureManagedPostgres(databaseUrl) {
   await ensureDockerEngine();
   console.log("[start:local] Starting PostgreSQL container...");
+  recordRunEvent("info", `Ensuring bundled PostgreSQL is running on port ${bundledPostgresPort}.`);
 
   try {
     await bringUpBundledPostgresContainer();
@@ -719,6 +796,7 @@ async function ensureManagedPostgres(databaseUrl) {
   }
 
   console.warn("[start:local] Bundled PostgreSQL is running but rejected the expected credentials.");
+  recordRunEvent("warn", "Bundled PostgreSQL rejected the expected credentials; recreating local container state.");
   await removeContainer(postgresContainerName);
   await resetBundledPostgresDataDirectory();
 
@@ -772,11 +850,13 @@ function startManagedProcess(command, args, options) {
   child.on("exit", (code) => {
     if (!shuttingDown) {
       console.error(`${options.prefix} exited unexpectedly with code ${code ?? "unknown"}`);
+      recordRunEvent("error", `${options.prefix} exited unexpectedly with code ${code ?? "unknown"}.`);
       shutdown(code ?? 1);
     }
   });
   child.on("error", (error) => {
     console.error(`${options.prefix} failed to start: ${error.message}`);
+    recordRunEvent("error", `${options.prefix} failed to start: ${error.message}`);
     shutdown(1);
   });
 
@@ -818,6 +898,7 @@ async function ensureExpectedHttpService({
 }) {
   if (await checkHttpCondition(url, isReady)) {
     console.log(`[start:local] Reusing existing ${label.toLowerCase()} at ${url}`);
+    recordRunEvent("info", `Reusing existing ${label.toLowerCase()} at ${url}.`);
     return false;
   }
 
@@ -858,6 +939,12 @@ function shutdown(exitCode = 0) {
     dependencyMonitorTimer = null;
   }
   console.log("[start:local] Shutting down...");
+  recordRunEvent("info", `Shutting down with exit code ${exitCode}.`);
+  finalizeRunLog(exitCode === 0 ? "SUCCESS" : "FAILURE", [
+    `Startup ready state: ${startupReachedReadyState ? "reached" : "not reached"}`,
+    `Frontend target: ${frontendUrl}`,
+    `Backend target: ${backendUrl}`,
+  ]);
   for (const child of children) {
     killChild(child);
   }
@@ -890,9 +977,14 @@ function startDependencyMonitor({ usesManagedPostgres, databaseUrl }) {
       console.warn(
         `[start:local] PostgreSQL dependency check failed (${dependencyFailureCount}/${dependencyFailureLimit}). Health=${health}, auth=${authOk ? "ok" : "failed"}.`,
       );
+      recordRunEvent(
+        "warn",
+        `PostgreSQL dependency check failed (${dependencyFailureCount}/${dependencyFailureLimit}). Health=${health}, auth=${authOk ? "ok" : "failed"}.`,
+      );
 
       if (dependencyFailureCount >= dependencyFailureLimit) {
         console.error("[start:local] PostgreSQL remained unhealthy. Stopping local app processes.");
+        recordRunEvent("error", "PostgreSQL remained unhealthy. Stopping local app processes.");
         shutdown(1);
       }
     } catch (error) {
@@ -900,9 +992,14 @@ function startDependencyMonitor({ usesManagedPostgres, databaseUrl }) {
       console.warn(
         `[start:local] PostgreSQL dependency monitor error (${dependencyFailureCount}/${dependencyFailureLimit}): ${error.message}`,
       );
+      recordRunEvent(
+        "warn",
+        `PostgreSQL dependency monitor error (${dependencyFailureCount}/${dependencyFailureLimit}): ${error.message}`,
+      );
 
       if (dependencyFailureCount >= dependencyFailureLimit) {
         console.error("[start:local] PostgreSQL dependency monitoring failed repeatedly. Stopping local app processes.");
+        recordRunEvent("error", "PostgreSQL dependency monitoring failed repeatedly. Stopping local app processes.");
         shutdown(1);
       }
     } finally {
@@ -912,6 +1009,8 @@ function startDependencyMonitor({ usesManagedPostgres, databaseUrl }) {
 }
 
 async function main() {
+  startRunLog();
+
   if (!existsSync(serverDir)) {
     throw new Error(`Server directory not found: ${serverDir}`);
   }
@@ -937,10 +1036,12 @@ async function main() {
 
       console.warn(`[start:local] ${error.message}`);
       console.warn(`[start:local] Falling back to local SQLite database at ${fallbackSqliteUrl}.`);
+      recordRunEvent("warn", `${error.message} Falling back to local SQLite database.`);
       databaseUrl = fallbackSqliteUrl;
     }
   } else if (databaseUrl.startsWith("sqlite:///")) {
     console.warn("[start:local] Using explicitly configured SQLite database; PostgreSQL container startup skipped.");
+    recordRunEvent("info", "Using explicitly configured SQLite database; PostgreSQL container startup skipped.");
   }
 
   const backendEnv = {
@@ -962,8 +1063,11 @@ async function main() {
       process.env.VITE_API_BASE_URL ?? fileEnv.VITE_API_BASE_URL ?? "http://127.0.0.1:8000",
   };
 
+  recordRunEvent("info", `Database target selected: ${describeDatabaseTarget(backendEnv.PHOTO_ORGANIZER_DATABASE_URL)}.`);
+
   console.log("[start:local] Starting backend...");
   await runBackendMigrations(backendEnv);
+  recordRunEvent("info", `Starting backend health target at ${backendUrl}.`);
   await ensureExpectedHttpService({
     host: backendHost,
     port: backendPort,
@@ -1000,6 +1104,7 @@ async function main() {
   });
 
   console.log("[start:local] Starting frontend...");
+  recordRunEvent("info", `Starting frontend target at ${frontendUrl}.`);
   const npmDev = buildNpmInvocation([
     "run",
     "dev",
@@ -1037,13 +1142,19 @@ async function main() {
     databaseUrl: backendEnv.PHOTO_ORGANIZER_DATABASE_URL,
   });
 
+  startupReachedReadyState = true;
   console.log("[start:local] App ready.");
   console.log(`[start:local] Frontend: ${frontendUrl}`);
   console.log(`[start:local] Backend health: ${backendUrl}`);
   console.log("[start:local] Press Ctrl+C to stop both processes.");
+  recordRunEvent(
+    "success",
+    `App ready. Frontend=${frontendUrl}; Backend=${backendUrl}; Database=${describeDatabaseTarget(backendEnv.PHOTO_ORGANIZER_DATABASE_URL)}.`,
+  );
 }
 
 main().catch((error) => {
   console.error(`[start:local] ${error.message}`);
+  recordRunEvent("error", error.message);
   shutdown(1);
 });

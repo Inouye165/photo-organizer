@@ -30,7 +30,7 @@ class ResetIndexStateSummary:
 
 
 def reset_indexed_state(session: Session, settings: Settings) -> ResetIndexStateSummary:
-    """Delete app-managed indexing records and generated browser media only."""
+    """Delete app-managed indexing records plus copied originals and derivatives."""
     summary = ResetIndexStateSummary(
         photos_deleted=session.scalar(select(count(Photo.id))) or 0,
         variants_deleted=session.scalar(select(count(PhotoVariant.id))) or 0,
