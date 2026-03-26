@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +20,7 @@ const frontendPort = 5173;
 const dependencyMonitorIntervalMs = 15000;
 const dependencyFailureLimit = 3;
 const runLogPath = path.join(repoDir, "docs", "start-local-results.md");
+const runStatePath = path.join(repoDir, ".local-start-state.json");
 const runSessionStartedAt = new Date();
 const runSessionId = `${runSessionStartedAt.toISOString()}-pid-${process.pid}`;
 const runHostname = os.hostname();
@@ -75,6 +76,29 @@ function ensureRunLogFile() {
   }
 }
 
+function persistRunState(overrides = {}) {
+  const nextState = {
+    sessionId: runSessionId,
+    startedAt: runSessionStartedAt.toISOString(),
+    hostname: runHostname,
+    pid: process.pid,
+    launcher: "npm run start:local",
+    runLogPath,
+    frontendUrl,
+    backendUrl,
+    startupReachedReadyState,
+    finalized: runOutcomeRecorded,
+    updatedAt: logTimestamp(),
+    ...overrides,
+  };
+
+  writeFileSync(runStatePath, `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
+}
+
+function clearRunState() {
+  rmSync(runStatePath, { force: true });
+}
+
 function appendRunLogLine(line = "") {
   ensureRunLogFile();
   appendFileSync(runLogPath, `${line}\n`, "utf8");
@@ -92,6 +116,7 @@ function startRunLog() {
   appendRunLogLine(`- Launcher: npm run start:local`);
   appendRunLogLine();
   recordRunEvent("info", "Launcher started.");
+  persistRunState();
 }
 
 function finalizeRunLog(status, details = []) {
@@ -106,6 +131,13 @@ function finalizeRunLog(status, details = []) {
     appendRunLogLine(`- Detail: ${detail}`);
   }
   appendRunLogLine();
+  persistRunState({
+    finalized: true,
+    endedAt: logTimestamp(),
+    outcome: status,
+    details,
+  });
+  clearRunState();
 }
 
 function describeDatabaseTarget(databaseUrl) {
@@ -1143,6 +1175,10 @@ async function main() {
   });
 
   startupReachedReadyState = true;
+  persistRunState({
+    startupReachedReadyState: true,
+    databaseTarget: describeDatabaseTarget(backendEnv.PHOTO_ORGANIZER_DATABASE_URL),
+  });
   console.log("[start:local] App ready.");
   console.log(`[start:local] Frontend: ${frontendUrl}`);
   console.log(`[start:local] Backend health: ${backendUrl}`);

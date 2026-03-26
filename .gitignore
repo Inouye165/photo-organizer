@@ -32,6 +32,7 @@ server/.tmp/
 .tmp/
 
 infra/postgres-data/
+.local-start-state.json
 
 *.log
 Thumbs.db
