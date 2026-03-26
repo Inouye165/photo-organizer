@@ -32,6 +32,14 @@ class Photo(Base):
     file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     file_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    managed_original_relative_path: Mapped[str | None] = mapped_column(
+        String(1024),
+        nullable=True,
+    )
+    managed_original_file_size_bytes: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+    )
     classification_label: Mapped[str] = mapped_column(
         String(32),
         default="likely_photo",

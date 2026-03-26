@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
+import pytest
+from alembic.config import Config
 from PIL import Image, ImageDraw
 from pillow_heif import register_heif_opener
 from sqlalchemy import select
 
+from alembic import command
 from app.core.config import Settings, get_settings
-from app.db.session import get_session_factory
+from app.db.session import get_engine, get_session_factory
 from app.models.photo import Photo
+from app.models.scan_run import ScanRun
 from app.services.media_variants import VariantService
 from app.services.photo_scanner import PhotoScannerService
 
@@ -42,13 +47,13 @@ def create_heic_photo(path: Path, captured_at: datetime) -> None:
     image.save(path, format="HEIF", exif=exif)
 
 
-def create_photo_series(root: Path, count: int) -> None:
+def create_photo_series(root: Path, count: int, *, width: int = 240, height: int = 320) -> None:
     """Create multiple deterministic photo-like files to exercise scan caps."""
     for index in range(count):
         pixel_data = np.random.default_rng(index + 101).integers(
             0,
             256,
-            size=(240, 320, 3),
+            size=(height, width, 3),
             dtype=np.uint8,
         )
         image = Image.fromarray(pixel_data, mode="RGB")
@@ -58,8 +63,66 @@ def create_photo_series(root: Path, count: int) -> None:
         image.save(root / f"bulk-{index:02d}.jpg", exif=exif)
 
 
-def test_scan_indexes_supported_files_and_creates_variants(client) -> None:
-    """A scan indexes supported images and generates both required variants."""
+def file_sha256(path: Path) -> str:
+    """Return a stable SHA-256 digest for one file path."""
+    digest = hashlib.sha256()
+    with path.open("rb") as file_handle:
+        for chunk in iter(lambda: file_handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def reset_runtime_caches() -> None:
+    """Clear settings and SQLAlchemy caches for temporary integration tests."""
+    get_settings.cache_clear()
+    get_engine.cache_clear()
+    get_session_factory.cache_clear()
+
+
+def run_scan_with_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    scan_root: Path,
+    *,
+    scan_max_photos: int | None,
+) -> tuple[ScanRun, Path]:
+    """Run one real scan with a temporary database and optional scan-cap override."""
+    database_path = tmp_path / "override-test.db"
+    media_root = tmp_path / "override-media"
+    alembic_config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+
+    monkeypatch.setenv("PHOTO_ORGANIZER_DATABASE_URL", f"sqlite:///{database_path.as_posix()}")
+    monkeypatch.setenv("PHOTO_ORGANIZER_SCAN_ROOTS", f"[\"{scan_root.as_posix()}\"]")
+    monkeypatch.setenv("PHOTO_ORGANIZER_GENERATED_MEDIA_ROOT", str(media_root))
+    monkeypatch.setenv("PHOTO_ORGANIZER_CORS_ORIGINS", "[\"http://localhost:5173\"]")
+    if scan_max_photos is None:
+        monkeypatch.delenv("PHOTO_ORGANIZER_SCAN_MAX_PHOTOS", raising=False)
+    else:
+        monkeypatch.setenv("PHOTO_ORGANIZER_SCAN_MAX_PHOTOS", str(scan_max_photos))
+
+    reset_runtime_caches()
+    command.upgrade(alembic_config, "head")
+
+    try:
+        settings = get_settings()
+        with get_session_factory()() as session:
+            scan_run = PhotoScannerService(settings).scan(session=session)
+        return scan_run, media_root
+    finally:
+        engine = get_engine()
+        engine.dispose()
+        reset_runtime_caches()
+
+
+def test_scan_indexes_supported_files_and_creates_managed_assets(
+    client,
+    prepared_scan_root: Path,
+) -> None:
+    """A scan copies managed originals, creates WebP variants, and leaves sources untouched."""
+    beach_source = prepared_scan_root / "beach.jpg"
+    beach_hash_before = file_sha256(beach_source)
+    beach_stat_before = beach_source.stat()
+
     scan_response = client.post("/api/scan-runs")
     assert scan_response.status_code == 200
     payload = scan_response.json()
@@ -88,6 +151,12 @@ def test_scan_indexes_supported_files_and_creates_variants(client) -> None:
             assert photo.classification_label == "likely_photo"
             assert photo.classification_details is not None
             assert photo.classification_details["label"] == "likely_photo"
+            assert photo.managed_original_relative_path is not None
+            managed_original_path = media_root / photo.managed_original_relative_path
+            assert managed_original_path.exists()
+            assert managed_original_path.suffix.lower() == photo.extension
+            assert managed_original_path.stat().st_size == photo.managed_original_file_size_bytes
+            assert file_sha256(managed_original_path) == photo.content_hash
             variants = {variant.kind: variant for variant in photo.variants}
             assert set(variants) == {"thumbnail", "display_webp"}
             for variant in variants.values():
@@ -98,6 +167,11 @@ def test_scan_indexes_supported_files_and_creates_variants(client) -> None:
                     assert "exif" not in variant_image.info
                     assert "xmp" not in variant_image.info
                     assert "xml" not in variant_image.info
+
+    assert file_sha256(beach_source) == beach_hash_before
+    beach_stat_after = beach_source.stat()
+    assert beach_stat_after.st_size == beach_stat_before.st_size
+    assert beach_stat_after.st_mtime_ns == beach_stat_before.st_mtime_ns
 
 
 def test_date_range_filter_returns_matching_photos_only(client, prepared_scan_root: Path) -> None:
@@ -271,14 +345,24 @@ def test_scan_indexes_heic_photos_with_variants(client, prepared_scan_root: Path
         assert heic_photo is not None
         assert heic_photo.extension == ".heic"
         assert heic_photo.content_hash is not None
+        assert heic_photo.managed_original_relative_path is not None
         assert heic_photo.captured_at is not None
         assert heic_photo.captured_at.replace(tzinfo=UTC) == heic_captured_at
         variants = {variant.kind: variant for variant in heic_photo.variants}
         assert set(variants) == {"thumbnail", "display_webp"}
 
         media_root = get_settings().resolved_media_root()
+        managed_original = media_root / heic_photo.managed_original_relative_path
+        assert managed_original.exists()
+        assert managed_original.suffix == ".HEIC"
         for variant in variants.values():
             assert (media_root / variant.relative_path).exists()
+
+
+def test_settings_default_scan_cap_is_five_hundred(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset scan-cap configuration defaults to the production-minded 500-photo limit."""
+    monkeypatch.delenv("PHOTO_ORGANIZER_SCAN_MAX_PHOTOS", raising=False)
+    assert Settings().scan_max_photos == 500
 
 
 def test_latest_scan_run_returns_null_before_first_scan(client) -> None:
@@ -299,23 +383,45 @@ def test_discovery_plan_endpoint_exposes_broad_machine_strategy(client) -> None:
     assert "system directories" in payload["excluded_path_categories"]
 
 
-def test_scan_stops_after_temporary_twenty_photo_cap(
+def test_scan_stops_after_default_five_hundred_photo_cap(
     client,
     prepared_scan_root: Path,
 ) -> None:
-    """The temporary scan cap stops indexing after the first twenty accepted photos."""
-    create_photo_series(prepared_scan_root, count=25)
+    """The default scan cap stops after 500 accepted photos, not after 500 candidates."""
+    create_photo_series(prepared_scan_root, count=505)
 
     scan_response = client.post("/api/scan-runs")
     assert scan_response.status_code == 200
     payload = scan_response.json()
-    assert payload["photos_indexed"] == 20
-    assert "Scan cap reached after indexing 20 photos." in (payload["notes"] or "")
+    assert payload["photos_indexed"] == 500
+    assert payload["likely_photos_accepted"] == 500
+    assert payload["candidate_images_evaluated"] >= 500
+    assert "Scan cap reached after indexing 500 photos." in (payload["notes"] or "")
 
-    photos_response = client.get("/api/photos", params={"page": 1, "page_size": 30})
+    photos_response = client.get("/api/photos", params={"page": 1, "page_size": 200})
     assert photos_response.status_code == 200
     photos_payload = photos_response.json()
-    assert photos_payload["total"] == 20
+    assert photos_payload["total"] == 500
+
+
+def test_scan_cap_env_override_still_applies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    prepared_scan_root: Path,
+) -> None:
+    """PHOTO_ORGANIZER_SCAN_MAX_PHOTOS still overrides the accepted-photo scan limit."""
+    create_photo_series(prepared_scan_root, count=8)
+
+    scan_run, _media_root = run_scan_with_env_override(
+        monkeypatch,
+        tmp_path,
+        prepared_scan_root,
+        scan_max_photos=3,
+    )
+
+    assert scan_run.photos_indexed == 3
+    assert scan_run.likely_photos_accepted == 3
+    assert "Scan cap reached after indexing 3 photos." in (scan_run.notes or "")
 
 
 def test_scan_errors_are_persisted_and_queryable(client) -> None:
@@ -343,10 +449,10 @@ def test_scan_continues_after_non_database_processing_error(
     """Unexpected per-file processing failures are recorded without aborting the batch."""
     original_ensure_variants = VariantService.ensure_variants
 
-    def flaky_variant_generation(self, session, photo, source_path):
+    def flaky_variant_generation(self, session, photo, source_path, **kwargs):
         if photo.file_name == "mountain.jpg":
             raise RuntimeError("Variant generation crashed")
-        return original_ensure_variants(self, session, photo, source_path)
+        return original_ensure_variants(self, session, photo, source_path, **kwargs)
 
     monkeypatch.setattr(VariantService, "ensure_variants", flaky_variant_generation)
 
@@ -490,7 +596,7 @@ def test_reset_endpoint_clears_app_managed_indexed_state(
     reset_payload = reset_response.json()
     assert reset_payload["photos_deleted"] == 2
     assert reset_payload["scan_runs_deleted"] == 1
-    assert reset_payload["media_files_deleted"] >= 2
+    assert reset_payload["media_files_deleted"] >= 4
 
     latest_response = client.get("/api/scan-runs/latest")
     assert latest_response.status_code == 200
@@ -540,6 +646,60 @@ def test_photo_detail_includes_latest_scan_run_provenance(client) -> None:
     assert payload["original_path"].endswith(("beach.jpg", "mountain.jpg"))
     assert payload["latest_scan_run_id"] == scan_run_id
     assert payload["classification_label"] == "likely_photo"
+
+
+def test_duplicate_handling_does_not_create_extra_managed_media(
+    client,
+    prepared_scan_root: Path,
+) -> None:
+    """Duplicate-content source files do not create extra managed originals or variants."""
+    shutil.copy2(prepared_scan_root / "beach.jpg", prepared_scan_root / "beach-copy.jpg")
+
+    scan_response = client.post("/api/scan-runs")
+    assert scan_response.status_code == 200
+
+    media_root = get_settings().resolved_media_root()
+    managed_originals = sorted(path for path in media_root.rglob("original*") if path.is_file())
+    thumbnails = sorted(path for path in media_root.rglob("thumbnail.webp") if path.is_file())
+    display_variants = sorted(
+        path for path in media_root.rglob("display_webp.webp") if path.is_file()
+    )
+
+    assert len(managed_originals) == 2
+    assert len(thumbnails) == 2
+    assert len(display_variants) == 2
+
+
+def test_rescan_repairs_missing_and_stale_variants(client) -> None:
+    """A later scan repairs missing or stale browser-facing variants from the managed original."""
+    first_scan = client.post("/api/scan-runs")
+    assert first_scan.status_code == 200
+
+    with get_session_factory()() as session:
+        photo = session.scalar(select(Photo).where(Photo.file_name == "beach.jpg"))
+        assert photo is not None
+        media_root = get_settings().resolved_media_root()
+        managed_original = media_root / (photo.managed_original_relative_path or "")
+        thumbnail = media_root / next(
+            variant.relative_path for variant in photo.variants if variant.kind == "thumbnail"
+        )
+        display = media_root / next(
+            variant.relative_path for variant in photo.variants if variant.kind == "display_webp"
+        )
+
+    stale_timestamp = 946684800
+    thumbnail.unlink()
+    os.utime(display, (stale_timestamp, stale_timestamp))
+    managed_original_stat = managed_original.stat()
+    assert not thumbnail.exists()
+    assert display.stat().st_mtime_ns < managed_original_stat.st_mtime_ns
+
+    second_scan = client.post("/api/scan-runs")
+    assert second_scan.status_code == 200
+
+    assert thumbnail.exists()
+    assert display.exists()
+    assert display.stat().st_mtime_ns > managed_original_stat.st_mtime_ns
 
 
 def test_scan_errors_returns_empty_list_before_any_scan(client) -> None:

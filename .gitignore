@@ -29,6 +29,7 @@ server/*.egg-info/
 server/generated-media/
 server/photo-organizer.db
 server/.tmp/
+.tmp/
 
 infra/postgres-data/
 

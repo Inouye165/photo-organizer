@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     database_url: str = Field(default=DEFAULT_DATABASE_URL)
     scan_roots: list[Path] = Field(default_factory=list)
-    scan_max_photos: int = 10
+    scan_max_photos: int = 500
     generated_media_root: Path = Field(default=Path("./generated-media"))
     cors_origins: list[str] = Field(default_factory=list)
     thumbnail_size: int = 360
