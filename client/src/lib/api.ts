@@ -36,7 +36,14 @@ export type ScanRun = {
   likely_graphics_rejected: number;
   unreadable_failed_count: number;
   errors_count: number;
+  diagnostics: ScanRunDiagnostics | null;
   notes: string | null;
+};
+
+export type ScanRunDiagnostics = {
+  outcome_counts: Record<string, number>;
+  excluded_path_counts: Record<string, number>;
+  sample_paths: Record<string, string[]>;
 };
 
 export type DiscoveryTier = {

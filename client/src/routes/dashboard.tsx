@@ -17,6 +17,7 @@ import { ScanStatusCard } from "@/components/scan-status-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { getDiscoveryPlan, getLatestScanRun, getPhoto, getPhotos, getScanErrors, getScanRuns, resetScanState, startScanRun } from "@/lib/api";
+import { getDiagnosticSamplePaths, getOutcomeCount, getTopExcludedCategories } from "@/lib/scan-diagnostics";
 
 const galleryPageSize = 24;
 const overlayPageSize = 60;
@@ -295,6 +296,11 @@ export function DashboardPage() {
   const scanFeedbackSummary = getScanFeedbackSummary(scanFeedbackStage);
   const scanFeedbackDescription = getScanFeedbackDescription(scanFeedbackStage);
   const scanFeedbackProgressWidth = getScanFeedbackProgressWidth(scanFeedbackStage);
+  const latestUnsupportedFiles = getOutcomeCount(latestScan, "unsupported_files");
+  const latestExcludedPaths = getOutcomeCount(latestScan, "excluded_path_skips");
+  const latestDuplicateFiles = getOutcomeCount(latestScan, "duplicate_files");
+  const latestExcludedCategories = getTopExcludedCategories(latestScan);
+  const latestRejectedSamples = getDiagnosticSamplePaths(latestScan, "rejected_graphics").slice(0, 2);
 
   useEffect(() => {
     setRunPhotosPageSize(overlayPageSize);
@@ -454,6 +460,51 @@ export function DashboardPage() {
               Latest run diagnostics
             </div>
             <p className="text-2xl font-semibold tracking-tight text-ink">{latestScan?.errors_count ?? 0}</p>
+            <div className="grid grid-cols-2 gap-2 text-sm text-amber-950/75">
+              <div className="rounded-2xl bg-white/65 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-900/55">Likely graphics</p>
+                <p className="mt-1 text-base font-semibold text-ink">{latestScan?.likely_graphics_rejected ?? 0}</p>
+              </div>
+              <div className="rounded-2xl bg-white/65 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-900/55">Unreadable</p>
+                <p className="mt-1 text-base font-semibold text-ink">{latestScan?.unreadable_failed_count ?? 0}</p>
+              </div>
+              <div className="rounded-2xl bg-white/65 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-900/55">Unsupported</p>
+                <p className="mt-1 text-base font-semibold text-ink">{latestUnsupportedFiles}</p>
+              </div>
+              <div className="rounded-2xl bg-white/65 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-900/55">Excluded paths</p>
+                <p className="mt-1 text-base font-semibold text-ink">{latestExcludedPaths}</p>
+              </div>
+            </div>
+            {latestExcludedCategories.length > 0 ? (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-900/55">Top excluded categories</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {latestExcludedCategories.map(([label, count]) => (
+                    <span key={label} className="rounded-full bg-white/70 px-3 py-1 text-xs text-amber-950/75">
+                      {label} {count}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {latestRejectedSamples.length > 0 ? (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-900/55">Recent graphic rejects</p>
+                <div className="mt-2 space-y-1 text-xs text-amber-950/75">
+                  {latestRejectedSamples.map((samplePath) => (
+                    <p key={samplePath} className="truncate" title={samplePath}>{samplePath}</p>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {latestDuplicateFiles > 0 ? (
+              <p className="text-sm leading-6 text-amber-900/65">
+                Duplicate-content skips in the latest run: {latestDuplicateFiles}
+              </p>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <Button className="h-9" disabled={!latestScan || latestScan.errors_count === 0} onClick={() => updatePanel("run-errors", latestScan?.id)} type="button" variant="secondary">
                 Review failed files

@@ -24,13 +24,10 @@ from app.models.scan_error import ScanError
 from app.models.scan_run import ScanRun
 from app.models.scan_run_photo import ScanRunPhoto
 from app.services.discovery_strategy import (
-    CACHE_AND_TEMP_EXCLUDED_DIR_NAMES,
-    DEFAULT_EXCLUDED_DIR_NAMES,
-    PROJECT_CONTEXT_EXCLUDED_DIR_NAMES,
-    PROJECT_MARKER_NAMES,
-    SYSTEM_EXCLUDED_DIR_NAMES,
-    TEST_AND_SAMPLE_EXCLUDED_DIR_NAMES,
     build_discovery_plan,
+    classify_directory_exclusion,
+    classify_relative_path_exclusion,
+    looks_like_project_workspace,
     sort_candidate_directories,
 )
 from app.services.media_variants import VariantService
@@ -72,6 +69,7 @@ RECOVERABLE_SCAN_EXCEPTIONS = (
     UnidentifiedImageError,
     ValueError,
 )
+MAX_DIAGNOSTIC_SAMPLE_PATHS = 5
 
 
 @dataclass(frozen=True)
@@ -92,6 +90,67 @@ class ScanErrorDetails:
     error_type: str
     reason: str
     diagnostic_metadata: dict[str, Any] | None = None
+
+
+@dataclass
+class ScanDiagnosticsTracker:
+    """Mutable summary of scan outcomes and representative sample paths."""
+
+    outcome_counts: dict[str, int]
+    excluded_path_counts: dict[str, int]
+    sample_paths: dict[str, list[str]]
+
+    @classmethod
+    def empty(cls) -> ScanDiagnosticsTracker:
+        """Create an empty diagnostics tracker for a new scan run."""
+        return cls(
+            outcome_counts={
+                "files_seen": 0,
+                "excluded_path_skips": 0,
+                "unsupported_files": 0,
+                "candidate_images_evaluated": 0,
+                "accepted_photos": 0,
+                "rejected_likely_graphics": 0,
+                "duplicate_files": 0,
+                "unreadable_files": 0,
+                "missing_roots": 0,
+            },
+            excluded_path_counts={},
+            sample_paths={
+                "accepted_photos": [],
+                "duplicates": [],
+                "excluded_paths": [],
+                "rejected_graphics": [],
+                "unreadable_files": [],
+                "unsupported_files": [],
+            },
+        )
+
+    def increment(self, key: str, amount: int = 1) -> None:
+        """Increment one named outcome counter."""
+        self.outcome_counts[key] = self.outcome_counts.get(key, 0) + amount
+
+    def note_sample(self, bucket: str, path: Path) -> None:
+        """Store a small representative sample of paths for one bucket."""
+        samples = self.sample_paths.setdefault(bucket, [])
+        normalized_path = path.as_posix()
+        if normalized_path in samples or len(samples) >= MAX_DIAGNOSTIC_SAMPLE_PATHS:
+            return
+        samples.append(normalized_path)
+
+    def note_excluded_path(self, category: str, path: Path) -> None:
+        """Track one excluded path and its category for later review."""
+        self.increment("excluded_path_skips")
+        self.excluded_path_counts[category] = self.excluded_path_counts.get(category, 0) + 1
+        self.note_sample("excluded_paths", path)
+
+    def serialize(self) -> dict[str, Any]:
+        """Convert the tracker into a JSON-serializable payload."""
+        return {
+            "outcome_counts": dict(sorted(self.outcome_counts.items())),
+            "excluded_path_counts": dict(sorted(self.excluded_path_counts.items())),
+            "sample_paths": self.sample_paths,
+        }
 
 
 def is_supported_file(file_path: Path) -> bool:
@@ -181,6 +240,7 @@ class PhotoScannerService:
         """Run a synchronous filesystem scan across the configured roots."""
         discovery_plan = build_discovery_plan(self.settings.scan_roots)
         roots = list(discovery_plan.ordered_roots)
+        diagnostics = ScanDiagnosticsTracker.empty()
         self.variant_service.media_root.mkdir(parents=True, exist_ok=True)
 
         scan_run = ScanRun(
@@ -196,6 +256,7 @@ class PhotoScannerService:
             likely_graphics_rejected=0,
             unreadable_failed_count=0,
             errors_count=0,
+            diagnostics=diagnostics.serialize(),
             notes=None,
         )
         session.add(scan_run)
@@ -207,9 +268,14 @@ class PhotoScannerService:
                 session=session,
                 scan_run=scan_run,
                 roots=roots,
+                diagnostics=diagnostics,
                 error_notes=error_notes,
             )
-            self._finalize_scan_run(scan_run=scan_run, error_notes=error_notes)
+            self._finalize_scan_run(
+                scan_run=scan_run,
+                diagnostics=diagnostics,
+                error_notes=error_notes,
+            )
         except SQLAlchemyError as exc:
             logger.exception("Fatal database error during scan")
             session.rollback()
@@ -226,6 +292,7 @@ class PhotoScannerService:
                 likely_graphics_rejected=scan_run.likely_graphics_rejected,
                 unreadable_failed_count=scan_run.unreadable_failed_count,
                 errors_count=scan_run.errors_count + 1,
+                diagnostics=diagnostics.serialize(),
                 notes=str(exc),
             )
             session.add(failed_run)
@@ -234,6 +301,7 @@ class PhotoScannerService:
             return failed_run
 
         scan_run.finished_at = datetime.now(UTC)
+        scan_run.diagnostics = diagnostics.serialize()
         scan_run.notes = "\n".join(error_notes[:20]) if error_notes else None
         session.commit()
         session.refresh(scan_run)
@@ -244,6 +312,7 @@ class PhotoScannerService:
         session: Session,
         scan_run: ScanRun,
         roots: list[Path],
+        diagnostics: ScanDiagnosticsTracker,
         error_notes: list[str],
     ) -> None:
         """Walk configured roots until the scan completes or reaches its cap."""
@@ -255,6 +324,7 @@ class PhotoScannerService:
                     session=session,
                     scan_run=scan_run,
                     root=root,
+                    diagnostics=diagnostics,
                     error_notes=error_notes,
                 )
                 continue
@@ -262,6 +332,7 @@ class PhotoScannerService:
                 session=session,
                 scan_run=scan_run,
                 root=root,
+                diagnostics=diagnostics,
                 error_notes=error_notes,
             )
 
@@ -270,16 +341,18 @@ class PhotoScannerService:
         session: Session,
         scan_run: ScanRun,
         root: Path,
+        diagnostics: ScanDiagnosticsTracker,
         error_notes: list[str],
     ) -> None:
         """Scan one filesystem root for supported image files."""
-        for file_path in self._walk_root(root):
+        for file_path in self._walk_root(root, diagnostics=diagnostics):
             if self._scan_stop_reached(scan_run):
                 break
             self._process_candidate(
                 session=session,
                 scan_run=scan_run,
                 file_path=file_path,
+                diagnostics=diagnostics,
                 error_notes=error_notes,
             )
 
@@ -288,13 +361,18 @@ class PhotoScannerService:
         session: Session,
         scan_run: ScanRun,
         file_path: Path,
+        diagnostics: ScanDiagnosticsTracker,
         error_notes: list[str],
     ) -> None:
         """Attempt to index one discovered file and persist any scan errors."""
         scan_run.files_seen += 1
+        diagnostics.increment("files_seen")
         if not is_supported_file(file_path):
+            diagnostics.increment("unsupported_files")
+            diagnostics.note_sample("unsupported_files", file_path)
             return
         scan_run.candidate_images_evaluated += 1
+        diagnostics.increment("candidate_images_evaluated")
 
         try:
             with session.begin_nested():
@@ -302,6 +380,7 @@ class PhotoScannerService:
                     session=session,
                     file_path=file_path,
                     scan_run=scan_run,
+                    diagnostics=diagnostics,
                 )
                 if photo is not None:
                     self._record_indexed_photo(
@@ -311,28 +390,34 @@ class PhotoScannerService:
                     )
                     scan_run.likely_photos_accepted += 1
                     scan_run.photos_indexed += 1
+                    diagnostics.increment("accepted_photos")
+                    diagnostics.note_sample("accepted_photos", file_path)
         except RECOVERABLE_SCAN_EXCEPTIONS as exc:
             self._record_scan_exception(
                 session=session,
                 scan_run=scan_run,
                 file_path=file_path,
+                diagnostics=diagnostics,
                 error_notes=error_notes,
                 exc=exc,
             )
 
     def iter_discovered_files(self, root: Path) -> Iterator[Path]:
         """Yield discovered files for one root using the scanner's traversal rules."""
-        return self._walk_root(root)
+        return self._walk_root(root, diagnostics=None)
 
     def _record_missing_root(
         self,
         session: Session,
         scan_run: ScanRun,
         root: Path,
+        diagnostics: ScanDiagnosticsTracker,
         error_notes: list[str],
     ) -> None:
         """Persist a scan error when a configured root is missing."""
         scan_run.errors_count += 1
+        diagnostics.increment("missing_roots")
+        diagnostics.note_sample("unreadable_files", root)
         reason = f"Missing scan root: {root.as_posix()}"
         error_notes.append(reason)
         _record_error(
@@ -350,17 +435,20 @@ class PhotoScannerService:
             ),
         )
 
-    def _record_scan_exception(
+    def _record_scan_exception(  # noqa: PLR0913
         self,
         session: Session,
         scan_run: ScanRun,
         file_path: Path,
+        diagnostics: ScanDiagnosticsTracker,
         error_notes: list[str],
         exc: Exception,
     ) -> None:
         """Persist a scan error when reading or parsing a file fails."""
         scan_run.errors_count += 1
         scan_run.unreadable_failed_count += 1
+        diagnostics.increment("unreadable_files")
+        diagnostics.note_sample("unreadable_files", file_path)
         error_notes.append(f"{file_path.name}: {exc}")
         logger.warning("Scan error for %s: %s", file_path, exc)
         _record_error(
@@ -394,9 +482,15 @@ class PhotoScannerService:
             session.add(ScanRunPhoto(scan_run_id=scan_run.id, photo_id=photo.id))
             session.flush()
 
-    def _finalize_scan_run(self, scan_run: ScanRun, error_notes: list[str]) -> None:
+    def _finalize_scan_run(
+        self,
+        scan_run: ScanRun,
+        diagnostics: ScanDiagnosticsTracker,
+        error_notes: list[str],
+    ) -> None:
         """Apply final status and notes once scanning finishes."""
         scan_run.status = "completed_with_errors" if scan_run.errors_count else "completed"
+        scan_run.diagnostics = diagnostics.serialize()
         stop_reason = self._stop_reason(scan_run)
         if stop_reason is not None:
             error_notes.append(stop_reason)
@@ -479,7 +573,12 @@ class PhotoScannerService:
             diagnostics.update(extra)
         return diagnostics
 
-    def _walk_root(self, root: Path) -> Iterator[Path]:
+    def _walk_root(
+        self,
+        root: Path,
+        *,
+        diagnostics: ScanDiagnosticsTracker | None,
+    ) -> Iterator[Path]:
         """Safely traverse one configured root without following symlinked directories."""
         root_is_project_workspace = self._looks_like_project_workspace(root)
         home_path = Path.home().expanduser().resolve()
@@ -491,6 +590,7 @@ class PhotoScannerService:
                 if self._should_descend_into(
                     root=root,
                     candidate_dir=current_dir / name,
+                    diagnostics=diagnostics,
                     root_is_project_workspace=root_is_project_workspace,
                 )
             ]
@@ -505,6 +605,7 @@ class PhotoScannerService:
                 if self._is_excluded_file(
                     root=root,
                     file_path=candidate,
+                    diagnostics=diagnostics,
                     root_is_project_workspace=root_is_project_workspace,
                 ):
                     continue
@@ -515,65 +616,61 @@ class PhotoScannerService:
         *,
         root: Path,
         candidate_dir: Path,
+        diagnostics: ScanDiagnosticsTracker | None,
         root_is_project_workspace: bool,
     ) -> bool:
         """Return whether the scanner should recurse into a discovered directory."""
         if candidate_dir.is_symlink():
             return False
 
-        candidate_name = candidate_dir.name.lower()
-        is_excluded_name = (
-            candidate_name in DEFAULT_EXCLUDED_DIR_NAMES
-            or candidate_name in SYSTEM_EXCLUDED_DIR_NAMES
-            or candidate_name in CACHE_AND_TEMP_EXCLUDED_DIR_NAMES
-            or candidate_name in TEST_AND_SAMPLE_EXCLUDED_DIR_NAMES
+        category = classify_directory_exclusion(
+            candidate_dir,
+            root=root,
+            root_is_project_workspace=root_is_project_workspace,
         )
-        is_project_context_excluded = (
-            root_is_project_workspace and candidate_name in PROJECT_CONTEXT_EXCLUDED_DIR_NAMES
-        )
-        is_nested_project = candidate_dir != root and self._looks_like_project_workspace(
-            candidate_dir
-        )
-        return not (
-            is_excluded_name
-            or self._is_within_managed_media_root(candidate_dir)
-            or is_project_context_excluded
-            or is_nested_project
-        )
+        if category is not None:
+            if diagnostics is not None:
+                diagnostics.note_excluded_path(category, candidate_dir)
+            return False
+        if self._is_within_managed_media_root(candidate_dir):
+            if diagnostics is not None:
+                diagnostics.note_excluded_path("managed generated media", candidate_dir)
+            return False
+        return True
 
     def _is_excluded_file(
         self,
         *,
         root: Path,
         file_path: Path,
+        diagnostics: ScanDiagnosticsTracker | None,
         root_is_project_workspace: bool,
     ) -> bool:
         """Return whether a discovered file should be skipped before classification."""
         if self._is_within_managed_media_root(file_path):
+            if diagnostics is not None:
+                diagnostics.note_excluded_path("managed generated media", file_path)
             return True
 
         try:
-            relative_parts = [part.lower() for part in file_path.relative_to(root).parts]
+            relative_parts = tuple(part.lower() for part in file_path.relative_to(root).parts)
         except ValueError:
-            relative_parts = [part.lower() for part in file_path.parts]
+            relative_parts = tuple(part.lower() for part in file_path.parts)
 
         if file_path.name.lower() in EXCLUDED_GENERATED_FILE_NAMES and any(
             part == "photos" for part in relative_parts
         ):
+            if diagnostics is not None:
+                diagnostics.note_excluded_path("managed generated media", file_path)
             return True
 
-        if any(part in SYSTEM_EXCLUDED_DIR_NAMES for part in relative_parts[:-1]):
-            return True
-
-        if any(part in CACHE_AND_TEMP_EXCLUDED_DIR_NAMES for part in relative_parts[:-1]):
-            return True
-
-        if any(part in TEST_AND_SAMPLE_EXCLUDED_DIR_NAMES for part in relative_parts[:-1]):
-            return True
-
-        return root_is_project_workspace and any(
-            part in PROJECT_CONTEXT_EXCLUDED_DIR_NAMES for part in relative_parts[:-1]
+        category = classify_relative_path_exclusion(
+            relative_parts,
+            root_is_project_workspace=root_is_project_workspace,
         )
+        if category is not None and diagnostics is not None:
+            diagnostics.note_excluded_path(category, file_path)
+        return category is not None
 
     def _is_within_managed_media_root(self, path: Path) -> bool:
         """Return whether a path points at or below the managed variant media root."""
@@ -587,12 +684,15 @@ class PhotoScannerService:
 
     def _looks_like_project_workspace(self, path: Path) -> bool:
         """Return whether a directory looks like an application/project workspace."""
-        try:
-            return any((path / marker_name).exists() for marker_name in PROJECT_MARKER_NAMES)
-        except OSError:
-            return False
+        return looks_like_project_workspace(path)
 
-    def _index_file(self, session: Session, file_path: Path, scan_run: ScanRun) -> Photo | None:
+    def _index_file(
+        self,
+        session: Session,
+        file_path: Path,
+        scan_run: ScanRun,
+        diagnostics: ScanDiagnosticsTracker,
+    ) -> Photo | None:
         """Insert or update one supported image file in the database."""
         resolved_path = file_path.resolve(strict=True)
         stat_result = resolved_path.stat()
@@ -608,6 +708,8 @@ class PhotoScannerService:
             existing_photo is None or duplicate_photo.id != existing_photo.id
         ):
             scan_run.errors_count += 1
+            diagnostics.increment("duplicate_files")
+            diagnostics.note_sample("duplicates", resolved_path)
             _record_error(
                 session=session,
                 scan_run=scan_run,
@@ -631,10 +733,12 @@ class PhotoScannerService:
 
         with Image.open(resolved_path) as image:
             normalized_image = ImageOps.exif_transpose(image)
-            classification = classify_image(normalized_image)
+            classification = classify_image(normalized_image, source_path=resolved_path)
             if classification.label != "likely_photo":
                 scan_run.likely_graphics_rejected += 1
                 scan_run.errors_count += 1
+                diagnostics.increment("rejected_likely_graphics")
+                diagnostics.note_sample("rejected_graphics", resolved_path)
                 _record_error(
                     session=session,
                     scan_run=scan_run,

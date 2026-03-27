@@ -2,6 +2,7 @@ import { format, formatDistanceToNowStrict } from "date-fns";
 import { FileWarning, Images, Layers3 } from "lucide-react";
 
 import type { ScanRun } from "@/lib/api";
+import { getOutcomeCount, getTopExcludedCategories } from "@/lib/scan-diagnostics";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -80,6 +81,14 @@ export function RecentScanRunsCard({
         ) : (
           runs.map((run) => (
             <article key={run.id} className="rounded-[24px] border border-black/8 bg-white/72 p-4">
+              {(() => {
+                const unsupportedFiles = getOutcomeCount(run, "unsupported_files");
+                const excludedPaths = getOutcomeCount(run, "excluded_path_skips");
+                const duplicateFiles = getOutcomeCount(run, "duplicate_files");
+                const excludedCategories = getTopExcludedCategories(run, 2);
+
+                return (
+                  <>
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -120,6 +129,17 @@ export function RecentScanRunsCard({
                 </div>
               </div>
 
+              <div className="mt-3 flex flex-wrap gap-2 text-xs text-black/55">
+                <span className="rounded-full bg-black/5 px-2.5 py-1">Excluded paths {excludedPaths}</span>
+                <span className="rounded-full bg-black/5 px-2.5 py-1">Unsupported {unsupportedFiles}</span>
+                <span className="rounded-full bg-black/5 px-2.5 py-1">Duplicates {duplicateFiles}</span>
+                {excludedCategories.map(([label, count]) => (
+                  <span key={`${run.id}-${label}`} className="rounded-full bg-[#f7f2ea] px-2.5 py-1 text-black/65">
+                    {label} {count}
+                  </span>
+                ))}
+              </div>
+
               <div className="mt-4 flex flex-wrap gap-2">
                 <Button className="h-9" onClick={() => onOpenPhotos(run.id)} type="button" variant="secondary">
                   <Images size={15} />
@@ -130,6 +150,9 @@ export function RecentScanRunsCard({
                   Errors
                 </Button>
               </div>
+                  </>
+                );
+              })()}
             </article>
           ))
         )}

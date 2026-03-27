@@ -23,6 +23,7 @@ function errorTypeLabel(errorType: string) {
     duplicate: "Duplicate content",
     file_io: "File access issue",
     invalid_metadata: "Invalid metadata",
+    likely_graphic: "Likely graphic",
     missing_root: "Missing folder",
     permission: "Permission denied",
     processing_error: "Processing failure",
@@ -36,6 +37,7 @@ function errorTypeIcon(errorType: string) {
     case "corrupt":
     case "processing_error":
       return <FileWarning size={16} className="text-red-500" />;
+    case "likely_graphic":
     case "rejected":
     case "permission":
       return <ShieldX size={16} className="text-amber-600" />;
@@ -53,8 +55,13 @@ function metadataLabel(error: ScanError) {
   const exceptionClass = typeof error.diagnostic_metadata?.exception_class === "string"
     ? error.diagnostic_metadata.exception_class
     : null;
+  const classifierScore = typeof error.diagnostic_metadata?.classification === "object"
+    && error.diagnostic_metadata?.classification != null
+    && typeof (error.diagnostic_metadata.classification as Record<string, unknown>).score === "number"
+      ? `score ${String((error.diagnostic_metadata.classification as Record<string, unknown>).score)}`
+      : null;
 
-  return [stage, exceptionClass].filter(Boolean).join(" • ");
+  return [stage, exceptionClass, classifierScore].filter(Boolean).join(" • ");
 }
 
 export function ScanErrorTable({

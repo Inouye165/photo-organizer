@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import JSON, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -28,4 +29,5 @@ class ScanRun(Base):
     likely_graphics_rejected: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     unreadable_failed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     errors_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    diagnostics: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

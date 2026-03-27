@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -41,6 +41,7 @@ class ScanRunRead(BaseModel):
     likely_graphics_rejected: int
     unreadable_failed_count: int
     errors_count: int
+    diagnostics: dict[str, Any] | None
     notes: str | None
 
 

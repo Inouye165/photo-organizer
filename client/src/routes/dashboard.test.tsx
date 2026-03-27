@@ -118,6 +118,29 @@ function configureDashboardMocks() {
     likely_graphics_rejected: 0,
     unreadable_failed_count: 0,
     errors_count: 0,
+    diagnostics: {
+      outcome_counts: {
+        accepted_photos: 1,
+        candidate_images_evaluated: 2,
+        duplicate_files: 0,
+        excluded_path_skips: 4,
+        rejected_likely_graphics: 0,
+        unreadable_files: 0,
+        unsupported_files: 1,
+      },
+      excluded_path_counts: {
+        "project and dependency artifacts": 2,
+        "temp and cache directories": 2,
+      },
+      sample_paths: {
+        accepted_photos: ["C:/Users/test/Pictures/beach.jpg"],
+        duplicates: [],
+        excluded_paths: ["C:/repo/node_modules"],
+        rejected_graphics: [],
+        unreadable_files: [],
+        unsupported_files: ["C:/repo/client/public/logo.png"],
+      },
+    },
     notes: null,
   };
 
@@ -136,6 +159,30 @@ function configureDashboardMocks() {
       likely_graphics_rejected: 1,
       unreadable_failed_count: 1,
       errors_count: 1,
+      diagnostics: {
+        outcome_counts: {
+          accepted_photos: 2,
+          candidate_images_evaluated: 4,
+          duplicate_files: 0,
+          excluded_path_skips: 18,
+          rejected_likely_graphics: 1,
+          unreadable_files: 1,
+          unsupported_files: 6,
+        },
+        excluded_path_counts: {
+          "project and dependency artifacts": 8,
+          "temp and cache directories": 6,
+          "test and sample directories": 4,
+        },
+        sample_paths: {
+          accepted_photos: ["C:/Users/test/Pictures/beach.jpg"],
+          duplicates: [],
+          excluded_paths: ["C:/repo/node_modules", "C:/repo/test-results"],
+          rejected_graphics: ["C:/repo/client/public/logo.jpg"],
+          unreadable_files: ["C:/repo/fixtures/broken.jpg"],
+          unsupported_files: ["C:/repo/client/public/logo.png"],
+        },
+      },
       notes: "broken.jpg: corrupt image",
     },
   });
@@ -155,6 +202,29 @@ function configureDashboardMocks() {
         likely_graphics_rejected: 1,
         unreadable_failed_count: 1,
         errors_count: 1,
+        diagnostics: {
+          outcome_counts: {
+            accepted_photos: 2,
+            candidate_images_evaluated: 4,
+            duplicate_files: 0,
+            excluded_path_skips: 18,
+            rejected_likely_graphics: 1,
+            unreadable_files: 1,
+            unsupported_files: 6,
+          },
+          excluded_path_counts: {
+            "project and dependency artifacts": 8,
+            "temp and cache directories": 6,
+          },
+          sample_paths: {
+            accepted_photos: ["C:/Users/test/Pictures/beach.jpg"],
+            duplicates: [],
+            excluded_paths: ["C:/repo/node_modules"],
+            rejected_graphics: ["C:/repo/client/public/logo.jpg"],
+            unreadable_files: ["C:/repo/fixtures/broken.jpg"],
+            unsupported_files: ["C:/repo/client/public/logo.png"],
+          },
+        },
         notes: "broken.jpg: corrupt image",
       },
       recentRun,
@@ -185,6 +255,29 @@ function configureDashboardMocks() {
     likely_graphics_rejected: 2,
     unreadable_failed_count: 1,
     errors_count: 3,
+    diagnostics: {
+      outcome_counts: {
+        accepted_photos: 3,
+        candidate_images_evaluated: 6,
+        duplicate_files: 1,
+        excluded_path_skips: 11,
+        rejected_likely_graphics: 2,
+        unreadable_files: 1,
+        unsupported_files: 4,
+      },
+      excluded_path_counts: {
+        "project and dependency artifacts": 5,
+        "system directories": 3,
+      },
+      sample_paths: {
+        accepted_photos: ["C:/Users/test/Pictures/beach.jpg"],
+        duplicates: ["C:/Users/test/Pictures/beach-copy.jpg"],
+        excluded_paths: ["C:/repo/node_modules"],
+        rejected_graphics: ["C:/repo/client/public/logo.jpg"],
+        unreadable_files: ["C:/repo/fixtures/broken.jpg"],
+        unsupported_files: ["C:/repo/client/public/logo.png"],
+      },
+    },
     notes: null,
   });
   mockedApi.getPhoto.mockResolvedValue(createPhotoDetail());
@@ -335,6 +428,8 @@ describe("DashboardPage", () => {
     expect(screen.getByText("Scan history")).toBeInTheDocument();
     expect(screen.getByText("Run #3")).toBeInTheDocument();
     expect(screen.getByText("evaluation")).toBeInTheDocument();
+    expect(screen.getAllByText(/Excluded paths 18/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("Top excluded categories")).toBeInTheDocument();
     expect(screen.getByTestId("discovery-plan-card")).toBeInTheDocument();
     expect(screen.getByText("Priority-first traversal with explainable exclusions.")).toBeInTheDocument();
   });
