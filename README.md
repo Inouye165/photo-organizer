@@ -116,7 +116,7 @@ Behavior:
 - if the bundled `infra/postgres-data` directory contains incompatible local PostgreSQL state, `start:local` resets that local data directory and recreates the bundled database automatically
 - if another Docker container already owns the selected bundled PostgreSQL host port, `start:local` stops with a precise conflict message instead of failing later during Compose startup
 - if Docker is unavailable while using that default PostgreSQL configuration, `start:local` exits with a clear error instead of silently switching databases
-- if `PHOTO_ORGANIZER_SCAN_ROOTS` is not set, it falls back to the bundled fixture photos so the app still opens successfully
+- if `PHOTO_ORGANIZER_SCAN_ROOTS` is not set, the launcher warns that the backend will use broad machine discovery; set `PHOTO_ORGANIZER_SCAN_ROOTS` to keep local scans bounded to known directories
 - if `PHOTO_ORGANIZER_SCAN_MAX_PHOTOS` is unset, the backend currently stops each scan after the first `500` accepted photos as a safety guard
 - if you explicitly set `PHOTO_ORGANIZER_DATABASE_URL` to a `sqlite:///...` value, `start:local` respects that and skips PostgreSQL container startup
 - `start:local` waits for the PostgreSQL container health check, backend `/health` payload, and frontend root page before declaring the app ready

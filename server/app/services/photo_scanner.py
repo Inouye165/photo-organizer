@@ -99,6 +99,13 @@ class ScanDiagnosticsTracker:
     outcome_counts: dict[str, int]
     excluded_path_counts: dict[str, int]
     sample_paths: dict[str, list[str]]
+    visited_directories_count: int
+    visited_directories_samples: list[str]
+    skipped_directories_count: int
+    skipped_directories_samples: list[dict[str, str]]
+    supported_files_by_extension: dict[str, int]
+    unsupported_files_by_extension: dict[str, int]
+    stop_reason: str | None
 
     @classmethod
     def empty(cls) -> ScanDiagnosticsTracker:
@@ -119,11 +126,19 @@ class ScanDiagnosticsTracker:
             sample_paths={
                 "accepted_photos": [],
                 "duplicates": [],
+                "candidate_files": [],
                 "excluded_paths": [],
                 "rejected_graphics": [],
                 "unreadable_files": [],
                 "unsupported_files": [],
             },
+            visited_directories_count=0,
+            visited_directories_samples=[],
+            skipped_directories_count=0,
+            skipped_directories_samples=[],
+            supported_files_by_extension={},
+            unsupported_files_by_extension={},
+            stop_reason=None,
         )
 
     def increment(self, key: str, amount: int = 1) -> None:
@@ -138,6 +153,36 @@ class ScanDiagnosticsTracker:
             return
         samples.append(normalized_path)
 
+    def note_directory_visit(self, path: Path) -> None:
+        """Track one visited directory for persisted traversal diagnostics."""
+        self.visited_directories_count += 1
+        normalized_path = path.as_posix()
+        if (
+            normalized_path in self.visited_directories_samples
+            or len(self.visited_directories_samples) >= MAX_DIAGNOSTIC_SAMPLE_PATHS
+        ):
+            return
+        self.visited_directories_samples.append(normalized_path)
+
+    def note_skipped_directory(self, path: Path, reason: str) -> None:
+        """Track one skipped directory and why it was excluded."""
+        self.skipped_directories_count += 1
+        normalized_path = path.as_posix()
+        sample = {"path": normalized_path, "reason": reason}
+        if sample in self.skipped_directories_samples or len(self.skipped_directories_samples) >= MAX_DIAGNOSTIC_SAMPLE_PATHS:
+            return
+        self.skipped_directories_samples.append(sample)
+
+    def note_file_extension(self, *, suffix: str, supported: bool) -> None:
+        """Count discovered files by extension and support status."""
+        extension = suffix.lower() if suffix else "<none>"
+        bucket = self.supported_files_by_extension if supported else self.unsupported_files_by_extension
+        bucket[extension] = bucket.get(extension, 0) + 1
+
+    def set_stop_reason(self, reason: str | None) -> None:
+        """Persist the final scan stop reason."""
+        self.stop_reason = reason
+
     def note_excluded_path(self, category: str, path: Path) -> None:
         """Track one excluded path and its category for later review."""
         self.increment("excluded_path_skips")
@@ -150,6 +195,13 @@ class ScanDiagnosticsTracker:
             "outcome_counts": dict(sorted(self.outcome_counts.items())),
             "excluded_path_counts": dict(sorted(self.excluded_path_counts.items())),
             "sample_paths": self.sample_paths,
+            "visited_directories_count": self.visited_directories_count,
+            "visited_directories_samples": self.visited_directories_samples,
+            "skipped_directories_count": self.skipped_directories_count,
+            "skipped_directories_samples": self.skipped_directories_samples,
+            "supported_files_by_extension": dict(sorted(self.supported_files_by_extension.items())),
+            "unsupported_files_by_extension": dict(sorted(self.unsupported_files_by_extension.items())),
+            "stop_reason": self.stop_reason,
         }
 
 
@@ -279,6 +331,7 @@ class PhotoScannerService:
         except SQLAlchemyError as exc:
             logger.exception("Fatal database error during scan")
             session.rollback()
+            diagnostics.set_stop_reason("Scan aborted due to a database error.")
             failed_run = ScanRun(
                 status="failed",
                 started_at=scan_run.started_at,
@@ -369,8 +422,11 @@ class PhotoScannerService:
         diagnostics.increment("files_seen")
         if not is_supported_file(file_path):
             diagnostics.increment("unsupported_files")
+            diagnostics.note_file_extension(suffix=file_path.suffix, supported=False)
             diagnostics.note_sample("unsupported_files", file_path)
             return
+        diagnostics.note_file_extension(suffix=file_path.suffix, supported=True)
+        diagnostics.note_sample("candidate_files", file_path)
         scan_run.candidate_images_evaluated += 1
         diagnostics.increment("candidate_images_evaluated")
 
@@ -492,6 +548,13 @@ class PhotoScannerService:
         scan_run.status = "completed_with_errors" if scan_run.errors_count else "completed"
         scan_run.diagnostics = diagnostics.serialize()
         stop_reason = self._stop_reason(scan_run)
+        if stop_reason is None:
+            stop_reason = (
+                "Configured roots exhausted before the evaluation target was reached."
+                if scan_run.mode == "evaluation"
+                else "Configured roots exhausted."
+            )
+        diagnostics.set_stop_reason(stop_reason)
         if stop_reason is not None:
             error_notes.append(stop_reason)
 
@@ -584,6 +647,8 @@ class PhotoScannerService:
         home_path = Path.home().expanduser().resolve()
         for current_path, dir_names, file_names in os.walk(root, followlinks=False):
             current_dir = Path(current_path)
+            if diagnostics is not None:
+                diagnostics.note_directory_visit(current_dir)
             candidate_dirs = [
                 current_dir / name
                 for name in dir_names
@@ -621,6 +686,8 @@ class PhotoScannerService:
     ) -> bool:
         """Return whether the scanner should recurse into a discovered directory."""
         if candidate_dir.is_symlink():
+            if diagnostics is not None:
+                diagnostics.note_skipped_directory(candidate_dir, "symlink")
             return False
 
         category = classify_directory_exclusion(
@@ -630,10 +697,12 @@ class PhotoScannerService:
         )
         if category is not None:
             if diagnostics is not None:
+                diagnostics.note_skipped_directory(candidate_dir, category)
                 diagnostics.note_excluded_path(category, candidate_dir)
             return False
         if self._is_within_managed_media_root(candidate_dir):
             if diagnostics is not None:
+                diagnostics.note_skipped_directory(candidate_dir, "managed generated media")
                 diagnostics.note_excluded_path("managed generated media", candidate_dir)
             return False
         return True

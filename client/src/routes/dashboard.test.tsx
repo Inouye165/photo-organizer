@@ -132,9 +132,23 @@ function configureDashboardMocks() {
         "project and dependency artifacts": 2,
         "temp and cache directories": 2,
       },
+        visited_directories_count: 3,
+        visited_directories_samples: ["C:/Users/test/Pictures", "C:/Users/test/Pictures/nested"],
+        skipped_directories_count: 4,
+        skipped_directories_samples: [
+          { path: "C:/repo/node_modules", reason: "project and dependency artifacts" },
+        ],
+        supported_files_by_extension: {
+          ".jpg": 2,
+        },
+        unsupported_files_by_extension: {
+          ".png": 1,
+        },
+        stop_reason: "Configured roots exhausted.",
       sample_paths: {
         accepted_photos: ["C:/Users/test/Pictures/beach.jpg"],
         duplicates: [],
+          candidate_files: ["C:/Users/test/Pictures/beach.jpg", "C:/Users/test/Pictures/nested/mountain.jpg"],
         excluded_paths: ["C:/repo/node_modules"],
         rejected_graphics: [],
         unreadable_files: [],
@@ -174,9 +188,23 @@ function configureDashboardMocks() {
           "temp and cache directories": 6,
           "test and sample directories": 4,
         },
+        visited_directories_count: 5,
+        visited_directories_samples: ["C:/Users/test/Pictures", "C:/repo"],
+        skipped_directories_count: 18,
+        skipped_directories_samples: [
+          { path: "C:/repo/node_modules", reason: "project and dependency artifacts" },
+        ],
+        supported_files_by_extension: {
+          ".jpg": 4,
+        },
+        unsupported_files_by_extension: {
+          ".png": 6,
+        },
+        stop_reason: "Configured roots exhausted.",
         sample_paths: {
           accepted_photos: ["C:/Users/test/Pictures/beach.jpg"],
           duplicates: [],
+          candidate_files: ["C:/Users/test/Pictures/beach.jpg"],
           excluded_paths: ["C:/repo/node_modules", "C:/repo/test-results"],
           rejected_graphics: ["C:/repo/client/public/logo.jpg"],
           unreadable_files: ["C:/repo/fixtures/broken.jpg"],
@@ -216,9 +244,23 @@ function configureDashboardMocks() {
             "project and dependency artifacts": 8,
             "temp and cache directories": 6,
           },
+          visited_directories_count: 4,
+          visited_directories_samples: ["C:/Users/test/Pictures"],
+          skipped_directories_count: 11,
+          skipped_directories_samples: [
+            { path: "C:/repo/node_modules", reason: "project and dependency artifacts" },
+          ],
+          supported_files_by_extension: {
+            ".jpg": 6,
+          },
+          unsupported_files_by_extension: {
+            ".png": 4,
+          },
+          stop_reason: "Configured roots exhausted.",
           sample_paths: {
             accepted_photos: ["C:/Users/test/Pictures/beach.jpg"],
             duplicates: [],
+            candidate_files: ["C:/Users/test/Pictures/beach.jpg"],
             excluded_paths: ["C:/repo/node_modules"],
             rejected_graphics: ["C:/repo/client/public/logo.jpg"],
             unreadable_files: ["C:/repo/fixtures/broken.jpg"],
@@ -269,9 +311,23 @@ function configureDashboardMocks() {
         "project and dependency artifacts": 5,
         "system directories": 3,
       },
+        visited_directories_count: 6,
+        visited_directories_samples: ["C:/Users/test/Pictures", "C:/repo"],
+        skipped_directories_count: 11,
+        skipped_directories_samples: [
+          { path: "C:/repo/node_modules", reason: "project and dependency artifacts" },
+        ],
+        supported_files_by_extension: {
+          ".jpg": 5,
+        },
+        unsupported_files_by_extension: {
+          ".png": 4,
+        },
+        stop_reason: "Configured roots exhausted.",
       sample_paths: {
         accepted_photos: ["C:/Users/test/Pictures/beach.jpg"],
         duplicates: ["C:/Users/test/Pictures/beach-copy.jpg"],
+          candidate_files: ["C:/Users/test/Pictures/beach.jpg"],
         excluded_paths: ["C:/repo/node_modules"],
         rejected_graphics: ["C:/repo/client/public/logo.jpg"],
         unreadable_files: ["C:/repo/fixtures/broken.jpg"],

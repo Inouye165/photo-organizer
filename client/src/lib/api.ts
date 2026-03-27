@@ -44,6 +44,13 @@ export type ScanRunDiagnostics = {
   outcome_counts: Record<string, number>;
   excluded_path_counts: Record<string, number>;
   sample_paths: Record<string, string[]>;
+  visited_directories_count: number;
+  visited_directories_samples: string[];
+  skipped_directories_count: number;
+  skipped_directories_samples: { path: string; reason: string }[];
+  supported_files_by_extension: Record<string, number>;
+  unsupported_files_by_extension: Record<string, number>;
+  stop_reason: string | null;
 };
 
 export type DiscoveryTier = {
