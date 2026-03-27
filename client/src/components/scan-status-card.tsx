@@ -1,6 +1,7 @@
 import { formatDistanceToNowStrict } from "date-fns";
 
 import type { ScanRun } from "@/lib/api";
+import { getOutcomeCount } from "@/lib/scan-diagnostics";
 
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
@@ -34,6 +35,9 @@ export function ScanStatusCard({ pendingMode, scanRun, isRunning }: ScanStatusCa
       ? "Running bounded photo evaluation"
       : "Scanning configured roots"
     : prettyStatus(scanRun?.status ?? null);
+  const excludedPaths = getOutcomeCount(scanRun, "excluded_path_skips");
+  const unsupportedFiles = getOutcomeCount(scanRun, "unsupported_files");
+  const duplicateFiles = getOutcomeCount(scanRun, "duplicate_files");
 
   return (
     <Card className="h-full bg-gradient-to-br from-ink via-[#24303c] to-black text-white">
@@ -70,6 +74,17 @@ export function ScanStatusCard({ pendingMode, scanRun, isRunning }: ScanStatusCa
           <p className="text-white/50">Failed</p>
           <p className="mt-1 text-lg font-semibold text-white">{scanRun?.unreadable_failed_count ?? 0}</p>
         </div>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2 text-xs text-white/72">
+        <span className="rounded-full border border-white/12 bg-white/8 px-2.5 py-1">
+          Excluded paths {excludedPaths}
+        </span>
+        <span className="rounded-full border border-white/12 bg-white/8 px-2.5 py-1">
+          Unsupported {unsupportedFiles}
+        </span>
+        <span className="rounded-full border border-white/12 bg-white/8 px-2.5 py-1">
+          Duplicates {duplicateFiles}
+        </span>
       </div>
     </Card>
   );

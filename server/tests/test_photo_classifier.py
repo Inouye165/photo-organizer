@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -75,6 +76,33 @@ def test_classifier_rejects_photo_like_image_without_camera_exif() -> None:
 
     assert result.label == "likely_graphic"
     assert result.diagnostics["required_threshold"] == 0.78
+
+
+def test_classifier_accepts_photo_like_image_without_exif_when_camera_path_signals_are_strong(
+) -> None:
+    """Camera-style path hints can rescue a plausible real photo that lacks EXIF."""
+    result = classify_image(
+        create_photo_like_image(width=1400, height=1100, seed=21),
+        source_path=Path("C:/Users/test/Pictures/DCIM/IMG_4021.JPG"),
+    )
+
+    assert result.label == "likely_photo"
+    assert result.score >= result.diagnostics["required_threshold"]
+    assert result.diagnostics["signals"]["camera_like_path"] is True
+    assert result.diagnostics["signals"]["camera_like_filename"] is True
+
+
+def test_classifier_rejects_photo_like_image_without_exif_when_asset_path_signals_are_strong(
+) -> None:
+    """Asset-style paths still reject photo-like pixels that look like app artwork."""
+    result = classify_image(
+        create_photo_like_image(width=1400, height=1100, seed=21),
+        source_path=Path("C:/repo/client/public/assets/logo-placeholder.jpg"),
+    )
+
+    assert result.label == "likely_graphic"
+    assert result.diagnostics["signals"]["asset_like_path"] is True
+    assert result.diagnostics["signals"]["asset_like_filename"] is True
 
 
 def test_classifier_rejects_smooth_gradient_artwork() -> None:

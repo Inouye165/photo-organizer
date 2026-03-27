@@ -7,6 +7,7 @@ import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -114,6 +115,60 @@ def run_scan_with_env_override(
         reset_runtime_caches()
 
 
+def assert_managed_assets_created(photos: list[Photo], media_root: Path) -> None:
+    """Verify managed originals and generated browser variants for indexed photos."""
+    for photo in photos:
+        assert photo.classification_label == "likely_photo"
+        assert photo.classification_details is not None
+        assert photo.classification_details["label"] == "likely_photo"
+        assert photo.managed_original_relative_path is not None
+        managed_original_path = media_root / photo.managed_original_relative_path
+        assert managed_original_path.exists()
+        assert managed_original_path.suffix.lower() == photo.extension
+        assert managed_original_path.stat().st_size == photo.managed_original_file_size_bytes
+        assert file_sha256(managed_original_path) == photo.content_hash
+        variants = {variant.kind: variant for variant in photo.variants}
+        assert set(variants) == {"thumbnail", "display_webp"}
+        for variant in variants.values():
+            variant_path = media_root / variant.relative_path
+            assert variant_path.exists()
+            with Image.open(variant_path) as variant_image:
+                assert dict(variant_image.getexif()) == {}
+                assert "exif" not in variant_image.info
+                assert "xmp" not in variant_image.info
+                assert "xml" not in variant_image.info
+
+
+def assert_scan_payload_summary(payload: dict[str, Any]) -> None:
+    """Verify the expected high-level scan counters for the baseline fixture set."""
+    assert payload["mode"] == "full"
+    assert payload["candidate_images_evaluated"] == 3
+    assert payload["likely_photos_accepted"] == 2
+    assert payload["likely_graphics_rejected"] == 0
+    assert payload["unreadable_failed_count"] == 1
+    assert payload["files_seen"] == 4
+    assert payload["photos_indexed"] == 2
+    assert payload["errors_count"] == 1
+    assert payload["diagnostics"]["outcome_counts"]["accepted_photos"] == 2
+    assert payload["diagnostics"]["outcome_counts"]["unsupported_files"] == 1
+    assert payload["diagnostics"]["outcome_counts"]["unreadable_files"] == 1
+    assert payload["diagnostics"]["sample_paths"]["accepted_photos"]
+
+
+def assert_source_file_unchanged(
+    source_path: Path,
+    *,
+    expected_hash: str,
+    expected_size: int,
+    expected_mtime_ns: int,
+) -> None:
+    """Verify the original source file was not modified by scanning."""
+    assert file_sha256(source_path) == expected_hash
+    source_stat_after = source_path.stat()
+    assert source_stat_after.st_size == expected_size
+    assert source_stat_after.st_mtime_ns == expected_mtime_ns
+
+
 def test_scan_indexes_supported_files_and_creates_managed_assets(
     client,
     prepared_scan_root: Path,
@@ -126,14 +181,7 @@ def test_scan_indexes_supported_files_and_creates_managed_assets(
     scan_response = client.post("/api/scan-runs")
     assert scan_response.status_code == 200
     payload = scan_response.json()
-    assert payload["mode"] == "full"
-    assert payload["candidate_images_evaluated"] == 3
-    assert payload["likely_photos_accepted"] == 2
-    assert payload["likely_graphics_rejected"] == 0
-    assert payload["unreadable_failed_count"] == 1
-    assert payload["files_seen"] == 4
-    assert payload["photos_indexed"] == 2
-    assert payload["errors_count"] == 1
+    assert_scan_payload_summary(payload)
 
     photos_response = client.get("/api/photos", params={"page": 1, "page_size": 10})
     assert photos_response.status_code == 200
@@ -147,31 +195,14 @@ def test_scan_indexes_supported_files_and_creates_managed_assets(
         photos = session.scalars(select(Photo)).all()
         assert len(photos) == 2
         media_root = get_settings().resolved_media_root()
-        for photo in photos:
-            assert photo.classification_label == "likely_photo"
-            assert photo.classification_details is not None
-            assert photo.classification_details["label"] == "likely_photo"
-            assert photo.managed_original_relative_path is not None
-            managed_original_path = media_root / photo.managed_original_relative_path
-            assert managed_original_path.exists()
-            assert managed_original_path.suffix.lower() == photo.extension
-            assert managed_original_path.stat().st_size == photo.managed_original_file_size_bytes
-            assert file_sha256(managed_original_path) == photo.content_hash
-            variants = {variant.kind: variant for variant in photo.variants}
-            assert set(variants) == {"thumbnail", "display_webp"}
-            for variant in variants.values():
-                variant_path = media_root / variant.relative_path
-                assert variant_path.exists()
-                with Image.open(variant_path) as variant_image:
-                    assert dict(variant_image.getexif()) == {}
-                    assert "exif" not in variant_image.info
-                    assert "xmp" not in variant_image.info
-                    assert "xml" not in variant_image.info
+        assert_managed_assets_created(photos=photos, media_root=media_root)
 
-    assert file_sha256(beach_source) == beach_hash_before
-    beach_stat_after = beach_source.stat()
-    assert beach_stat_after.st_size == beach_stat_before.st_size
-    assert beach_stat_after.st_mtime_ns == beach_stat_before.st_mtime_ns
+    assert_source_file_unchanged(
+        beach_source,
+        expected_hash=beach_hash_before,
+        expected_size=beach_stat_before.st_size,
+        expected_mtime_ns=beach_stat_before.st_mtime_ns,
+    )
 
 
 def test_date_range_filter_returns_matching_photos_only(client, prepared_scan_root: Path) -> None:
@@ -245,6 +276,11 @@ def test_scan_skips_videos_and_non_photographic_graphics(
     assert payload["files_seen"] == 7
     assert payload["photos_indexed"] == 2
     assert payload["errors_count"] == 2
+    assert payload["diagnostics"]["outcome_counts"]["unsupported_files"] == 3
+    assert payload["diagnostics"]["outcome_counts"]["rejected_likely_graphics"] == 1
+    assert payload["diagnostics"]["sample_paths"]["rejected_graphics"] == [
+        (prepared_scan_root / "poster.jpg").as_posix()
+    ]
 
     photos_response = client.get("/api/photos", params={"page": 1, "page_size": 20})
     assert photos_response.status_code == 200
@@ -294,6 +330,41 @@ def test_walk_root_excludes_managed_media_and_project_asset_directories(tmp_path
         for path in service.iter_discovered_files(scan_root)
     }
     assert discovered_paths == {"vacation/bulk-00.jpg"}
+
+
+def test_scan_records_excluded_path_diagnostics_for_project_and_temp_noise(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Broad scans record which noisy path categories were skipped before image work."""
+    scan_root = tmp_path / "scan-root"
+    accepted_dir = scan_root / "Pictures"
+    accepted_dir.mkdir(parents=True)
+    create_photo_series(accepted_dir, count=1)
+    (scan_root / "package.json").write_text("{}\n", encoding="utf8")
+
+    excluded_dirs = [
+        scan_root / "cache" / "thumbs",
+        scan_root / "samples" / "marketing",
+        scan_root / "client" / "public",
+    ]
+    for directory in excluded_dirs:
+        directory.mkdir(parents=True, exist_ok=True)
+        create_photo_series(directory, count=1)
+
+    scan_run, _media_root = run_scan_with_env_override(
+        monkeypatch,
+        tmp_path,
+        scan_root,
+        scan_max_photos=None,
+    )
+
+    diagnostics = scan_run.diagnostics or {}
+    assert diagnostics["outcome_counts"]["excluded_path_skips"] >= 3
+    assert diagnostics["excluded_path_counts"]["project asset directories"] >= 1
+    assert diagnostics["excluded_path_counts"]["temp and cache directories"] >= 1
+    assert diagnostics["excluded_path_counts"]["test and sample directories"] >= 1
+    assert diagnostics["sample_paths"]["excluded_paths"]
 
 
 def test_walk_root_excludes_system_temp_and_sample_directories(tmp_path: Path) -> None:

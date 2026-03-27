@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 from PIL import Image, ImageOps
 
-CLASSIFIER_VERSION = "heuristic-v2"
+CLASSIFIER_VERSION = "heuristic-v3"
 MIN_PHOTO_EDGE = 160
 MIN_NO_EXIF_EDGE = 1000
 MIN_NO_EXIF_PIXELS = 1_000_000
@@ -18,6 +20,7 @@ RGB_CHANNEL_COUNT = 3
 ALPHA_OPAQUE_THRESHOLD = 250
 PHOTO_SCORE_THRESHOLD = 0.55
 NO_EXIF_PHOTO_SCORE_THRESHOLD = 0.78
+NO_EXIF_CAMERA_HINT_THRESHOLD = 0.72
 ENTROPY_PHOTO_THRESHOLD = 5.25
 ENTROPY_GRAPHIC_THRESHOLD = 4.45
 EDGE_DENSITY_PHOTO_THRESHOLD = 0.012
@@ -42,7 +45,59 @@ SCORE_UNIQUE_BUCKET_POSITIVE = 0.08
 SCORE_UNIQUE_BUCKET_NEGATIVE = -0.14
 SCORE_DOMINANT_BUCKET_NEGATIVE = -0.18
 SCORE_TRANSPARENCY_NEGATIVE = -0.18
+SCORE_CAMERA_PATH_POSITIVE = 0.16
+SCORE_CAMERA_FILENAME_POSITIVE = 0.2
+SCORE_ASSET_PATH_NEGATIVE = -0.2
+SCORE_ASSET_FILENAME_NEGATIVE = -0.18
 PHOTOGRAPHIC_EXIF_TAGS = (271, 272, 33437, 34855, 37386, 42035, 42036)
+CAMERA_PATH_HINT_NAMES = frozenset(
+    {
+        "100apple",
+        "100andro",
+        "camera",
+        "camera roll",
+        "dcim",
+        "iphone",
+        "mobile uploads",
+        "photos",
+        "pictures",
+        "saved pictures",
+    }
+)
+ASSET_PATH_HINT_NAMES = frozenset(
+    {
+        "asset",
+        "assets",
+        "emoji",
+        "favicon",
+        "icon",
+        "icons",
+        "illustration",
+        "logo",
+        "logos",
+        "mockup",
+        "mockups",
+        "placeholder",
+        "placeholders",
+        "sprite",
+        "sprites",
+        "sticker",
+        "stickers",
+        "thumbnail",
+        "thumbnails",
+    }
+)
+CAMERA_FILENAME_PATTERN = re.compile(
+    (
+        r"^(?:dji_|dsc_|img_|img-|mvimg_|pxl_|sam_|wp_|\d{8}_\d{6}|"
+        r"\d{4}-\d{2}-\d{2}[ _]\d{2}[.-]\d{2}[.-]\d{2})"
+    ),
+    re.IGNORECASE,
+)
+ASSET_FILENAME_PATTERN = re.compile(
+    r"(?:^|[-_.])(asset|avatar|emoji|favicon|icon|illustration|logo|mockup|placeholder|sprite|sticker|thumb|thumbnail)(?:[-_.]|$)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -61,7 +116,11 @@ def has_photographic_exif(image: Image.Image) -> bool:
     return any(exif.get(tag) for tag in PHOTOGRAPHIC_EXIF_TAGS)
 
 
-def classify_image(image: Image.Image) -> PhotoClassification:
+def classify_image(
+    image: Image.Image,
+    *,
+    source_path: Path | None = None,
+) -> PhotoClassification:
     """Classify an image as likely photo or likely graphic using image heuristics."""
     if getattr(image, "is_animated", False) or getattr(image, "n_frames", 1) > 1:
         return PhotoClassification(
@@ -103,6 +162,7 @@ def classify_image(image: Image.Image) -> PhotoClassification:
     signals["height"] = height
     signals["transparency_ratio"] = transparency_ratio
     signals["has_photographic_exif"] = has_camera_exif
+    signals.update(_path_signals(source_path))
 
     score = SCORE_BASELINE
     reasons: list[str] = []
@@ -117,6 +177,7 @@ def classify_image(image: Image.Image) -> PhotoClassification:
     score += _score_unique_bucket_ratio(signals["unique_bucket_ratio"], reasons)
     score += _score_dominant_bucket_ratio(signals["dominant_bucket_ratio"], reasons)
     score += _score_transparency(transparency_ratio, has_camera_exif, reasons)
+    score += _score_path_hints(signals, has_camera_exif, reasons)
 
     if transparency_ratio >= TRANSPARENCY_HARD_REJECT_THRESHOLD and not has_camera_exif:
         score = min(score, 0.2)
@@ -129,9 +190,18 @@ def classify_image(image: Image.Image) -> PhotoClassification:
         score = max(score, CAMERA_EXIF_SCORE_FLOOR)
 
     score = max(0.0, min(1.0, score))
-    required_threshold = (
-        PHOTO_SCORE_THRESHOLD if has_camera_exif else NO_EXIF_PHOTO_SCORE_THRESHOLD
-    )
+    required_threshold = PHOTO_SCORE_THRESHOLD if has_camera_exif else NO_EXIF_PHOTO_SCORE_THRESHOLD
+    if (
+        not has_camera_exif
+        and bool(signals["camera_like_path"])
+        and bool(signals["camera_like_filename"])
+        and not bool(signals["asset_like_path"])
+        and not bool(signals["asset_like_filename"])
+    ):
+        required_threshold = NO_EXIF_CAMERA_HINT_THRESHOLD
+        reasons.append(
+            "Camera-style path evidence allows a slightly lower threshold despite missing EXIF."
+        )
     label = "likely_photo" if score >= required_threshold else "likely_graphic"
 
     if label == "likely_photo" and not reasons:
@@ -241,6 +311,47 @@ def _score_missing_camera_evidence(
         "Missing camera metadata, so this file must clear a much stricter visual-photo bar."
     )
     return -0.1
+
+
+def _score_path_hints(
+    signals: dict[str, float | int | bool],
+    has_camera_exif: bool,
+    reasons: list[str],
+) -> float:
+    score = 0.0
+    if bool(signals["camera_like_path"]):
+        reasons.append("Source path matches common camera or photo-library folders.")
+        score += SCORE_CAMERA_PATH_POSITIVE
+    if bool(signals["camera_like_filename"]):
+        reasons.append("Filename matches common camera export naming patterns.")
+        score += SCORE_CAMERA_FILENAME_POSITIVE
+    if bool(signals["asset_like_path"]) and not has_camera_exif:
+        reasons.append("Source path looks like an app asset or generated artwork location.")
+        score += SCORE_ASSET_PATH_NEGATIVE
+    if bool(signals["asset_like_filename"]) and not has_camera_exif:
+        reasons.append("Filename looks like a UI asset rather than an original camera photo.")
+        score += SCORE_ASSET_FILENAME_NEGATIVE
+    return score
+
+
+def _path_signals(source_path: Path | None) -> dict[str, bool]:
+    """Derive lightweight path-based hints for the classifier."""
+    if source_path is None:
+        return {
+            "camera_like_path": False,
+            "camera_like_filename": False,
+            "asset_like_path": False,
+            "asset_like_filename": False,
+        }
+
+    path_parts = [part.lower() for part in source_path.parts]
+    stem = source_path.stem.lower()
+    return {
+        "camera_like_path": any(part in CAMERA_PATH_HINT_NAMES for part in path_parts[:-1]),
+        "camera_like_filename": CAMERA_FILENAME_PATTERN.search(stem) is not None,
+        "asset_like_path": any(part in ASSET_PATH_HINT_NAMES for part in path_parts[:-1]),
+        "asset_like_filename": ASSET_FILENAME_PATTERN.search(stem) is not None,
+    }
 
 
 def _extract_signals(image: Image.Image) -> dict[str, float]:

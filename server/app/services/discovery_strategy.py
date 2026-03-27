@@ -109,6 +109,14 @@ PROJECT_MARKER_NAMES = frozenset(
         "vite.config.ts",
     }
 )
+EXCLUDED_DIRECTORY_CATEGORY_LABELS = {
+    "project_artifact": "project and dependency artifacts",
+    "project_asset": "project asset directories",
+    "system": "system directories",
+    "temp_cache": "temp and cache directories",
+    "test_sample": "test and sample directories",
+    "nested_project": "nested project workspaces",
+}
 
 
 @dataclass(frozen=True)
@@ -304,11 +312,64 @@ def _excluded_categories() -> tuple[str, ...]:
     return (
         "managed generated media",
         "project and dependency artifacts",
+        "project asset directories",
         "system directories",
         "temp and cache directories",
         "test and sample directories",
         "nested project workspaces",
     )
+
+
+def looks_like_project_workspace(path: Path) -> bool:
+    """Return whether a directory looks like an application or project workspace."""
+    try:
+        return any((path / marker_name).exists() for marker_name in PROJECT_MARKER_NAMES)
+    except OSError:
+        return False
+
+
+def classify_directory_exclusion(
+    candidate_dir: Path,
+    *,
+    root: Path,
+    root_is_project_workspace: bool,
+) -> str | None:
+    """Return the exclusion category for a directory, if it should be skipped."""
+    candidate_name = candidate_dir.name.lower()
+    category: str | None = None
+    if candidate_name in DEFAULT_EXCLUDED_DIR_NAMES:
+        category = EXCLUDED_DIRECTORY_CATEGORY_LABELS["project_artifact"]
+    elif candidate_name in SYSTEM_EXCLUDED_DIR_NAMES:
+        category = EXCLUDED_DIRECTORY_CATEGORY_LABELS["system"]
+    elif candidate_name in CACHE_AND_TEMP_EXCLUDED_DIR_NAMES:
+        category = EXCLUDED_DIRECTORY_CATEGORY_LABELS["temp_cache"]
+    elif candidate_name in TEST_AND_SAMPLE_EXCLUDED_DIR_NAMES:
+        category = EXCLUDED_DIRECTORY_CATEGORY_LABELS["test_sample"]
+    elif root_is_project_workspace and candidate_name in PROJECT_CONTEXT_EXCLUDED_DIR_NAMES:
+        category = EXCLUDED_DIRECTORY_CATEGORY_LABELS["project_asset"]
+    elif candidate_dir != root and looks_like_project_workspace(candidate_dir):
+        category = EXCLUDED_DIRECTORY_CATEGORY_LABELS["nested_project"]
+    return category
+
+
+def classify_relative_path_exclusion(
+    relative_parts: tuple[str, ...],
+    *,
+    root_is_project_workspace: bool,
+) -> str | None:
+    """Return the exclusion category for a discovered file path, if any."""
+    ancestor_parts = relative_parts[:-1]
+    if any(part in SYSTEM_EXCLUDED_DIR_NAMES for part in ancestor_parts):
+        return EXCLUDED_DIRECTORY_CATEGORY_LABELS["system"]
+    if any(part in CACHE_AND_TEMP_EXCLUDED_DIR_NAMES for part in ancestor_parts):
+        return EXCLUDED_DIRECTORY_CATEGORY_LABELS["temp_cache"]
+    if any(part in TEST_AND_SAMPLE_EXCLUDED_DIR_NAMES for part in ancestor_parts):
+        return EXCLUDED_DIRECTORY_CATEGORY_LABELS["test_sample"]
+    if root_is_project_workspace and any(
+        part in PROJECT_CONTEXT_EXCLUDED_DIR_NAMES for part in ancestor_parts
+    ):
+        return EXCLUDED_DIRECTORY_CATEGORY_LABELS["project_asset"]
+    return None
 
 
 def _resolved_home_path() -> Path:
