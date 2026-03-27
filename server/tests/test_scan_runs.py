@@ -152,6 +152,11 @@ def assert_scan_payload_summary(payload: dict[str, Any]) -> None:
     assert payload["diagnostics"]["outcome_counts"]["accepted_photos"] == 2
     assert payload["diagnostics"]["outcome_counts"]["unsupported_files"] == 1
     assert payload["diagnostics"]["outcome_counts"]["unreadable_files"] == 1
+    assert payload["diagnostics"]["visited_directories_count"] >= 1
+    assert payload["diagnostics"]["visited_directories_samples"]
+    assert payload["diagnostics"]["supported_files_by_extension"]
+    assert payload["diagnostics"]["unsupported_files_by_extension"]
+    assert payload["diagnostics"]["stop_reason"] == "Configured roots exhausted."
     assert payload["diagnostics"]["sample_paths"]["accepted_photos"]
 
 
@@ -203,6 +208,22 @@ def test_scan_indexes_supported_files_and_creates_managed_assets(
         expected_size=beach_stat_before.st_size,
         expected_mtime_ns=beach_stat_before.st_mtime_ns,
     )
+
+
+def test_discovery_plan_uses_configured_scan_roots(client, prepared_scan_root: Path) -> None:
+    """Configured roots should flow through the public discovery-plan endpoint."""
+    response = client.get("/api/scan-runs/discovery-plan")
+    assert response.status_code == 200
+    payload = response.json()["plan"]
+    assert payload["mode"] == "configured"
+    assert payload["ordered_roots"] == [prepared_scan_root.as_posix()]
+    assert payload["tiers"] == [
+        {
+            "name": "Configured roots",
+            "description": "Explicit roots supplied through PHOTO_ORGANIZER_SCAN_ROOTS.",
+            "paths": [prepared_scan_root.as_posix()],
+        }
+    ]
 
 
 def test_date_range_filter_returns_matching_photos_only(client, prepared_scan_root: Path) -> None:
@@ -259,6 +280,52 @@ def test_scan_skips_duplicate_content_hashes(client, prepared_scan_root: Path) -
         assert {"beach.jpg", "beach-copy.jpg"} & photo_names
         assert all(photo.content_hash is not None for photo in photos)
         assert len({photo.content_hash for photo in photos}) == 2
+
+
+def test_scan_caps_accepted_photos_at_100_and_persists_traversal_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The scanner should respect a 100-photo cap and persist traversal diagnostics."""
+    scan_root = tmp_path / "scan-root"
+    accepted_dir = scan_root / "Pictures" / "album"
+    accepted_dir.mkdir(parents=True)
+    create_photo_series(accepted_dir, count=101)
+
+    create_graphic_image(scan_root / "poster.jpg")
+    (scan_root / "broken.jpg").write_bytes(b"not-an-image")
+    (scan_root / "notes.txt").write_text("notes\n", encoding="utf8")
+    (scan_root / "logo.png").write_bytes(b"not-a-real-png")
+
+    skipped_dir = scan_root / "node_modules" / "ignored"
+    skipped_dir.mkdir(parents=True)
+    create_photo_series(skipped_dir, count=1)
+
+    scan_run, _media_root = run_scan_with_env_override(
+        monkeypatch,
+        tmp_path,
+        scan_root,
+        scan_max_photos=100,
+    )
+
+    diagnostics = scan_run.diagnostics or {}
+    assert scan_run.roots_json == [scan_root.as_posix()]
+    assert scan_run.photos_indexed == 100
+    assert diagnostics["stop_reason"] == "Scan cap reached after indexing 100 photos."
+    assert diagnostics["visited_directories_count"] >= 3
+    assert scan_root.as_posix() in diagnostics["visited_directories_samples"]
+    assert diagnostics["skipped_directories_count"] >= 1
+    skipped_sample = next(
+        sample for sample in diagnostics["skipped_directories_samples"] if "node_modules" in sample["path"]
+    )
+    assert skipped_sample["reason"] == "project and dependency artifacts"
+    assert diagnostics["supported_files_by_extension"][".jpg"] == 102
+    assert diagnostics["unsupported_files_by_extension"][".txt"] == 1
+    assert diagnostics["unsupported_files_by_extension"][".png"] == 1
+    assert any(path.endswith("poster.jpg") for path in diagnostics["sample_paths"]["rejected_graphics"])
+    assert any(path.endswith("broken.jpg") for path in diagnostics["sample_paths"]["unreadable_files"])
+    assert any(path.endswith("bulk-00.jpg") for path in diagnostics["sample_paths"]["accepted_photos"])
+    assert diagnostics["sample_paths"]["candidate_files"]
 
 
 def test_scan_skips_videos_and_non_photographic_graphics(
