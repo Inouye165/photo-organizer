@@ -3,6 +3,7 @@ import { useRef } from "react";
 import { Images } from "lucide-react";
 
 import type { PhotoSummary } from "@/lib/api";
+import { getGalleryMinCardWidth, type GalleryThumbnailSize } from "@/lib/gallery-layout";
 
 import { ModalShell } from "@/components/modal-shell";
 import { PhotoCard } from "@/components/photo-card";
@@ -26,6 +27,7 @@ type PhotoCollectionModalProps = {
   onRetry: () => void;
   onSelectPhoto: (photoId: number) => void;
   photos: PhotoSummary[];
+  thumbnailSize: GalleryThumbnailSize;
   title: string;
 };
 
@@ -46,9 +48,15 @@ export function PhotoCollectionModal({
   onRetry,
   onSelectPhoto,
   photos,
+  thumbnailSize,
   title,
 }: PhotoCollectionModalProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const minCardWidth = getGalleryMinCardWidth(thumbnailSize);
+  const gridStyle = {
+    contain: "layout style",
+    gridTemplateColumns: `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))`,
+  } satisfies React.CSSProperties;
 
   return (
     <ModalShell
@@ -61,7 +69,7 @@ export function PhotoCollectionModal({
       title={title}
     >
       {isLoading ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3" style={gridStyle}>
           {Array.from({ length: 6 }).map((_, index) => (
             <div key={index} className="overflow-hidden rounded-[24px] border border-black/10 bg-white/70 p-3">
               <div className="aspect-[4/3] animate-pulse rounded-[18px] bg-black/8" />
@@ -94,9 +102,10 @@ export function PhotoCollectionModal({
               onSelectPhoto={onSelectPhoto}
               photos={photos}
               scrollElement={scrollContainerRef.current}
+              thumbnailSize={thumbnailSize}
             />
           ) : (
-            <section aria-label={title} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" style={{ contain: 'layout style' }}>
+            <section aria-label={title} className="grid gap-3" style={gridStyle}>
               {photos.map((photo) => (
                 <PhotoCard key={photo.id} onSelect={onSelectPhoto} photo={photo} />
               ))}

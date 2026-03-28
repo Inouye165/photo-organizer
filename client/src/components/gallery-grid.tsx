@@ -1,3 +1,4 @@
+import { getGalleryMinCardWidth, type GalleryThumbnailSize } from "@/lib/gallery-layout";
 import type { PhotoSummary } from "@/lib/api";
 
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ type GalleryGridProps = {
   errorMessage: string | null;
   onRetry: () => void;
   onSelectPhoto: (photoId: number) => void;
+  thumbnailSize: GalleryThumbnailSize;
 };
 
 export function GalleryGrid({
@@ -19,12 +21,19 @@ export function GalleryGrid({
   errorMessage,
   onRetry,
   onSelectPhoto,
+  thumbnailSize,
 }: GalleryGridProps) {
+  const minCardWidth = getGalleryMinCardWidth(thumbnailSize);
+  const gridStyle = {
+    contain: "layout style",
+    gridTemplateColumns: `repeat(auto-fill, minmax(${minCardWidth}px, 1fr))`,
+  } satisfies React.CSSProperties;
+
   if (isLoading) {
     return (
       <div className="h-full">
         <h2 className="text-lg font-semibold text-ink">Loading photos...</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-4 grid gap-3" style={gridStyle}>
           {Array.from({ length: 6 }).map((_, index) => (
             <div key={index} className="overflow-hidden rounded-[24px] border border-black/10 bg-white/70 p-3">
               <div className="aspect-[4/3] animate-pulse rounded-[18px] bg-black/8" />
@@ -63,7 +72,7 @@ export function GalleryGrid({
   }
 
   return (
-    <section aria-label="Gallery" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" style={{ contain: 'layout style' }}>
+    <section aria-label="Gallery" className="grid gap-3" style={gridStyle}>
       {photos.map((photo) => (
         <PhotoCard key={photo.id} onSelect={onSelectPhoto} photo={photo} />
       ))}

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.db.session import get_db_session
 from app.models.photo import Photo
+from app.models.photo_variant import PhotoVariant
 from app.models.scan_run_photo import ScanRunPhoto
 from app.schemas.photo import (
     PhotoDetail,
@@ -21,9 +22,10 @@ from app.services.photo_scanner import PhotoFilters, apply_photo_filters, count_
 router = APIRouter()
 
 
-def build_variant_url(relative_path: str) -> str:
-    """Build a public URL for a generated variant."""
-    return f"/media/{relative_path}"
+def build_variant_url(variant: PhotoVariant) -> str:
+    """Build a public URL for a generated variant with a cache-busting token."""
+    cache_token = f"{int(variant.created_at.timestamp())}-{variant.file_size_bytes}"
+    return f"/media/{variant.relative_path}?v={cache_token}"
 
 
 def serialize_photo(photo: Photo) -> PhotoListItem:
@@ -43,8 +45,8 @@ def serialize_photo(photo: Photo) -> PhotoListItem:
         file_modified_at=photo.file_modified_at,
         created_at=photo.created_at,
         classification_label=photo.classification_label,
-        thumbnail_url=build_variant_url(thumbnail.relative_path) if thumbnail else None,
-        display_url=build_variant_url(display.relative_path) if display else None,
+        thumbnail_url=build_variant_url(thumbnail) if thumbnail else None,
+        display_url=build_variant_url(display) if display else None,
     )
 
 
@@ -62,7 +64,7 @@ def serialize_photo_detail(photo: Photo) -> PhotoDetail:
             mime_type=variant.mime_type,
             file_size_bytes=variant.file_size_bytes,
             created_at=variant.created_at,
-            url=build_variant_url(variant.relative_path),
+            url=build_variant_url(variant),
         )
         for variant in sorted(photo.variants, key=lambda item: item.kind)
     ]

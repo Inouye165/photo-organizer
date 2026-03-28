@@ -5,12 +5,14 @@ import type { PhotoSummary } from "@/lib/api";
 import { resolveApiAssetUrl } from "@/lib/api";
 
 type PhotoCardProps = {
+  imageFetchPriority?: "auto" | "high" | "low";
   imageLoading?: "eager" | "lazy";
   photo: PhotoSummary;
   onSelect: (photoId: number) => void;
 };
 
 export const PhotoCard = memo(function PhotoCard({
+  imageFetchPriority = "auto",
   imageLoading = "lazy",
   photo,
   onSelect,
@@ -23,7 +25,7 @@ export const PhotoCard = memo(function PhotoCard({
 
   return (
     <button
-      className="group relative aspect-[4/3] overflow-hidden rounded-[24px] border border-black/10 bg-white/80 text-left shadow-panel hover:-translate-y-0.5 hover:shadow-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/30"
+      className="relative aspect-[4/3] overflow-hidden rounded-[24px] border border-black/10 bg-white/80 text-left shadow-panel transition-[border-color,background-color] duration-150 hover:border-black/15 hover:bg-white/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/30"
       onClick={handleClick}
       style={{ contain: 'layout style paint', contentVisibility: 'auto', containIntrinsicSize: 'auto 300px' }}
       type="button"
@@ -34,8 +36,12 @@ export const PhotoCard = memo(function PhotoCard({
             alt={photo.file_name}
             className="h-full w-full object-cover"
             decoding="async"
+            draggable={false}
+            fetchPriority={imageFetchPriority}
+            height={photo.height}
             loading={imageLoading}
             src={thumbnailUrl}
+            width={photo.width}
           />
         ) : null}
       </div>

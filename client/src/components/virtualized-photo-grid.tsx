@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import type { PhotoSummary } from "@/lib/api";
+import { getGalleryColumnCount, type GalleryThumbnailSize } from "@/lib/gallery-layout";
 
 import { PhotoCard } from "@/components/photo-card";
 
@@ -15,46 +16,18 @@ type VirtualizedPhotoGridProps = {
   photos: PhotoSummary[];
   onSelectPhoto: (photoId: number) => void;
   scrollElement: HTMLDivElement | null;
+  thumbnailSize: GalleryThumbnailSize;
 };
-
-function getColumnCount(viewportWidth: number) {
-  if (viewportWidth >= 1280) {
-    return 3;
-  }
-
-  if (viewportWidth >= 640) {
-    return 2;
-  }
-
-  return 1;
-}
 
 export function VirtualizedPhotoGrid({
   ariaLabel,
   photos,
   onSelectPhoto,
   scrollElement,
+  thumbnailSize,
 }: VirtualizedPhotoGridProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [viewportWidth, setViewportWidth] = useState(
-    typeof window === "undefined" ? 1280 : window.innerWidth,
-  );
   const [containerWidth, setContainerWidth] = useState(0);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return undefined;
-    }
-
-    function handleResize() {
-      setViewportWidth(window.innerWidth);
-    }
-
-    window.addEventListener("resize", handleResize);
-    return () => {
-      window.removeEventListener("resize", handleResize);
-    };
-  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -80,7 +53,7 @@ export function VirtualizedPhotoGrid({
     };
   }, []);
 
-  const columnCount = getColumnCount(viewportWidth);
+  const columnCount = getGalleryColumnCount(containerWidth, thumbnailSize, gridGapPx);
   const cardWidth = containerWidth > 0
     ? Math.max((containerWidth - (gridGapPx * (columnCount - 1))) / columnCount, 0)
     : 280;
@@ -124,12 +97,17 @@ export function VirtualizedPhotoGrid({
                 gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
                 transform: `translateY(${virtualRow.start}px)`,
                 width: "100%",
-                willChange: 'transform',
                 contain: 'layout style',
               }}
             >
               {rowPhotos.map((photo) => (
-                <PhotoCard imageLoading="eager" key={photo.id} onSelect={onSelectPhoto} photo={photo} />
+                <PhotoCard
+                  imageFetchPriority={virtualRow.index === 0 ? "high" : "auto"}
+                  imageLoading={virtualRow.index === 0 ? "eager" : "lazy"}
+                  key={photo.id}
+                  onSelect={onSelectPhoto}
+                  photo={photo}
+                />
               ))}
             </div>
           );

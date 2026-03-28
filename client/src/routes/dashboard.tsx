@@ -7,6 +7,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { AppShell } from "@/components/app-shell";
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { GalleryGrid } from "@/components/gallery-grid";
+import { GalleryPerformanceMonitor } from "@/components/gallery-performance-monitor";
 import { MetricCard } from "@/components/metric-card";
 import { ModalShell } from "@/components/modal-shell";
 import { PhotoCollectionModal } from "@/components/photo-collection-modal";
@@ -17,11 +18,26 @@ import { ScanStatusCard } from "@/components/scan-status-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { getDiscoveryPlan, getLatestScanRun, getPhoto, getPhotos, getScanErrors, getScanRuns, resetScanState, startScanRun } from "@/lib/api";
+import { galleryThumbnailSizes, type GalleryThumbnailSize } from "@/lib/gallery-layout";
 import { getDiagnosticSamplePaths, getOutcomeCount, getTopExcludedCategories } from "@/lib/scan-diagnostics";
 
 const galleryPageSize = 24;
 const overlayPageSize = 60;
 const historyPageSizeStep = 6;
+const galleryThumbnailSizeStorageKey = "photo-organizer.gallery-thumbnail-size";
+
+function isGalleryThumbnailSize(value: string | null): value is GalleryThumbnailSize {
+  return value === "large" || value === "medium" || value === "small";
+}
+
+function readStoredGalleryThumbnailSize(): GalleryThumbnailSize {
+  if (typeof window === "undefined") {
+    return "medium";
+  }
+
+  const storedValue = window.localStorage.getItem(galleryThumbnailSizeStorageKey);
+  return isGalleryThumbnailSize(storedValue) ? storedValue : "medium";
+}
 
 function normalizeSearchValue(value: string | null) {
   return value ?? "";
@@ -144,6 +160,11 @@ export function DashboardPage() {
   const [runPhotosPageSize, setRunPhotosPageSize] = useState(overlayPageSize);
   const [runErrorsPageSize, setRunErrorsPageSize] = useState(overlayPageSize);
   const [historyPageSize, setHistoryPageSize] = useState(historyPageSizeStep);
+  const [galleryThumbnailSize, setGalleryThumbnailSize] = useState<GalleryThumbnailSize>(() => readStoredGalleryThumbnailSize());
+
+  useEffect(() => {
+    window.localStorage.setItem(galleryThumbnailSizeStorageKey, galleryThumbnailSize);
+  }, [galleryThumbnailSize]);
 
   const latestScanQuery = useQuery({
     queryKey: ["latest-scan"],
@@ -621,13 +642,41 @@ export function DashboardPage() {
                   : "The accepted-photo library, separate from latest evaluation counters and run diagnostics. Searchable metadata comes from DB-backed indexing, not embedded browser copies."}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="rounded-full bg-black/5 px-3 py-1 text-sm text-black/55">{filteredCount} visible</p>
-              <Button className="h-9" onClick={() => updatePanel(dateFrom || dateTo ? "filtered" : "all")} type="button" variant="secondary">
-                Open focused view
-              </Button>
+            <div className="flex max-w-[28rem] flex-col items-end gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <p className="rounded-full bg-black/5 px-3 py-1 text-sm text-black/55">{filteredCount} visible</p>
+                <Button className="h-9" onClick={() => updatePanel(dateFrom || dateTo ? "filtered" : "all")} type="button" variant="secondary">
+                  Open focused view
+                </Button>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-black/45">Icon size</p>
+                <div className="flex items-center gap-1 rounded-full bg-black/5 p-1">
+                  {galleryThumbnailSizes.map((size) => {
+                    const isActive = galleryThumbnailSize === size;
+                    const label = `${size.charAt(0).toUpperCase()}${size.slice(1)}`;
+
+                    return (
+                      <button
+                        aria-label={`${label} icons`}
+                        aria-pressed={isActive}
+                        className={isActive
+                          ? "rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-white"
+                          : "rounded-full px-3 py-1.5 text-xs font-semibold text-black/60 hover:bg-white/70"
+                        }
+                        key={size}
+                        onClick={() => setGalleryThumbnailSize(size)}
+                        type="button"
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </div>
+          <GalleryPerformanceMonitor />
           <div className="mt-3 flex-1 overflow-y-auto pr-1" data-testid="gallery-scroll-region">
             <GalleryGrid
               errorMessage={galleryErrorMessage}
@@ -636,6 +685,7 @@ export function DashboardPage() {
               onRetry={() => void galleryQuery.refetch()}
               onSelectPhoto={handleSelectPhoto}
               photos={galleryQuery.data?.items ?? []}
+              thumbnailSize={galleryThumbnailSize}
             />
           </div>
         </Card>
@@ -667,6 +717,7 @@ export function DashboardPage() {
         onRetry={() => void allPhotosModalQuery.refetch()}
         onSelectPhoto={handleSelectPhoto}
         photos={allPhotosModalQuery.data?.items ?? []}
+        thumbnailSize={galleryThumbnailSize}
         title="Indexed library"
       />
 
@@ -687,6 +738,7 @@ export function DashboardPage() {
         onRetry={() => void filteredPhotosModalQuery.refetch()}
         onSelectPhoto={handleSelectPhoto}
         photos={filteredPhotosModalQuery.data?.items ?? []}
+        thumbnailSize={galleryThumbnailSize}
         title="Filtered library photos"
       />
 
@@ -707,6 +759,7 @@ export function DashboardPage() {
         onRetry={() => void selectedRunPhotosModalQuery.refetch()}
         onSelectPhoto={handleSelectPhoto}
         photos={selectedRunPhotosModalQuery.data?.items ?? []}
+        thumbnailSize={galleryThumbnailSize}
         title={selectedRunId != null ? `Run #${selectedRunId} accepted likely photos` : "Run accepted likely photos"}
       />
 

@@ -338,6 +338,7 @@ function renderDashboard(initialEntries: string[] = ["/"]) {
 }
 
 afterEach(() => {
+  window.localStorage.clear();
   vi.resetAllMocks();
 });
 
@@ -432,6 +433,20 @@ describe("DashboardPage", () => {
     expect(screen.getByText("Top excluded categories")).toBeInTheDocument();
     expect(screen.getByTestId("discovery-plan-card")).toBeInTheDocument();
     expect(screen.getByText("Priority-first traversal with explainable exclusions.")).toBeInTheDocument();
+    expect(screen.getByTestId("gallery-performance-monitor")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Large icons" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Medium icons" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("persists the selected gallery icon size", async () => {
+    configureDashboardMocks();
+
+    renderDashboard();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Small icons" }));
+
+    expect(screen.getByRole("button", { name: "Small icons" })).toHaveAttribute("aria-pressed", "true");
+    expect(window.localStorage.getItem("photo-organizer.gallery-thumbnail-size")).toBe("small");
   });
 
   it("renders the all-photos overlay from route state", async () => {
