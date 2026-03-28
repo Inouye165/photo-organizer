@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
@@ -124,6 +125,7 @@ class VariantService:
             variant.height = height
             variant.mime_type = "image/webp"
             variant.file_size_bytes = absolute_path.stat().st_size
+            variant.created_at = datetime.now(UTC)
 
             if previous_relative_path and previous_relative_path != relative_path.as_posix():
                 _delete_file_if_exists(self.media_root / previous_relative_path)

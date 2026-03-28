@@ -288,3 +288,24 @@ Each run records:
 - Detail: Frontend target: http://127.0.0.1:5173/
 - Detail: Backend target: http://127.0.0.1:8000/health
 
+## Run 2026-03-28T01:10:27.061Z-pid-39544
+- Started: 2026-03-28T01:10:27.061Z
+- Hostname: Rons-Computer
+- PID: 39544
+- Launcher: npm run start:local
+
+- 2026-03-28T01:10:27.069Z | INFO | Launcher started.
+- 2026-03-28T01:10:29.012Z | INFO | Ensuring bundled PostgreSQL is running on port 5434.
+- 2026-03-28T01:10:41.468Z | WARN | PHOTO_ORGANIZER_SCAN_ROOTS not set; backend will use broad machine discovery.
+- 2026-03-28T01:10:41.470Z | INFO | Database target selected: bundled-postgres:5434.
+- 2026-03-28T01:10:43.151Z | INFO | Starting backend health target at http://127.0.0.1:8000/health.
+- 2026-03-28T01:10:45.303Z | INFO | Starting frontend target at http://127.0.0.1:5173/.
+- 2026-03-28T01:10:46.895Z | SUCCESS | App ready. Frontend=http://127.0.0.1:5173/; Backend=http://127.0.0.1:8000/health; Database=bundled-postgres:5434.
+- 2026-03-28T01:31:44.500Z | ERROR | [frontend] exited unexpectedly with code 3221225786.
+- 2026-03-28T01:31:44.502Z | INFO | Shutting down with exit code 3221225786.
+- Ended: 2026-03-28T01:31:44.502Z
+- Outcome: FAILURE
+- Detail: Startup ready state: reached
+- Detail: Frontend target: http://127.0.0.1:5173/
+- Detail: Backend target: http://127.0.0.1:8000/health
+

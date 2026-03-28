@@ -190,6 +190,8 @@ def test_scan_indexes_supported_files_and_creates_managed_assets(
     assert len(photos_payload["items"]) == 2
     assert all(item["thumbnail_url"] for item in photos_payload["items"])
     assert all(item["display_url"] for item in photos_payload["items"])
+    assert all("?v=" in item["thumbnail_url"] for item in photos_payload["items"])
+    assert all("?v=" in item["display_url"] for item in photos_payload["items"])
 
     with get_session_factory()() as session:
         photos = session.scalars(select(Photo)).all()
