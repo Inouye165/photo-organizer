@@ -1,10 +1,11 @@
-import { type PropsWithChildren, useEffect, useId, useRef } from "react";
+import { type PropsWithChildren, type RefObject, useEffect, useId, useRef } from "react";
 import { X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
 type ModalShellProps = PropsWithChildren<{
   countLabel?: string;
+  contentRef?: RefObject<HTMLDivElement | null>;
   description?: string;
   eyebrow?: string;
   isOpen: boolean;
@@ -15,6 +16,7 @@ type ModalShellProps = PropsWithChildren<{
 export function ModalShell({
   children,
   countLabel,
+  contentRef,
   description,
   eyebrow,
   isOpen,
@@ -87,7 +89,7 @@ export function ModalShell({
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end bg-black/28 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4">
+    <div className="fixed inset-0 z-40 flex items-end bg-black/40 p-0 sm:items-center sm:justify-center sm:p-4">
       <button aria-label="Close dialog" className="absolute inset-0" onClick={onClose} type="button" />
       <section
         aria-labelledby={titleId}
@@ -116,7 +118,7 @@ export function ModalShell({
             <X size={18} />
           </Button>
         </header>
-        <div className="flex-1 overflow-y-auto px-5 py-4 sm:px-6 sm:py-5">{children}</div>
+        <div className="flex-1 overflow-y-auto px-5 py-4 sm:px-6 sm:py-5" ref={contentRef} style={{ willChange: 'transform' }}>{children}</div>
       </section>
     </div>
   );

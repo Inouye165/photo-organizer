@@ -63,7 +63,7 @@ export function GalleryGrid({
   }
 
   return (
-    <section aria-label="Gallery" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <section aria-label="Gallery" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" style={{ contain: 'layout style' }}>
       {photos.map((photo) => (
         <PhotoCard key={photo.id} onSelect={onSelectPhoto} photo={photo} />
       ))}

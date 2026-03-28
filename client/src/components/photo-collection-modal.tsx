@@ -1,3 +1,5 @@
+import { useRef } from "react";
+
 import { Images } from "lucide-react";
 
 import type { PhotoSummary } from "@/lib/api";
@@ -5,6 +7,7 @@ import type { PhotoSummary } from "@/lib/api";
 import { ModalShell } from "@/components/modal-shell";
 import { PhotoCard } from "@/components/photo-card";
 import { Button } from "@/components/ui/button";
+import { VirtualizedPhotoGrid } from "@/components/virtualized-photo-grid";
 
 type PhotoCollectionModalProps = {
   canLoadMore?: boolean;
@@ -45,9 +48,12 @@ export function PhotoCollectionModal({
   photos,
   title,
 }: PhotoCollectionModalProps) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
   return (
     <ModalShell
       countLabel={`${count} ${count === 1 ? "photo" : "photos"}`}
+      contentRef={scrollContainerRef}
       description={description}
       eyebrow={eyebrow}
       isOpen={isOpen}
@@ -82,11 +88,20 @@ export function PhotoCollectionModal({
         </div>
       ) : (
         <div className="space-y-4">
-          <section aria-label={title} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {photos.map((photo) => (
-              <PhotoCard key={photo.id} onSelect={onSelectPhoto} photo={photo} />
-            ))}
-          </section>
+          {photos.length > 24 ? (
+            <VirtualizedPhotoGrid
+              ariaLabel={title}
+              onSelectPhoto={onSelectPhoto}
+              photos={photos}
+              scrollElement={scrollContainerRef.current}
+            />
+          ) : (
+            <section aria-label={title} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" style={{ contain: 'layout style' }}>
+              {photos.map((photo) => (
+                <PhotoCard key={photo.id} onSelect={onSelectPhoto} photo={photo} />
+              ))}
+            </section>
+          )}
           {canLoadMore && onLoadMore ? (
             <div className="flex justify-center">
               <Button className="h-10 min-w-40" disabled={isLoadingMore} onClick={onLoadMore} type="button" variant="secondary">

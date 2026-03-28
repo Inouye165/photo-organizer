@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CalendarRange, FileWarning, Images, Layers3, ScanSearch } from "lucide-react";
@@ -322,11 +322,13 @@ export function DashboardPage() {
     setSearchParams(next);
   }
 
-  function handleSelectPhoto(photoId: number) {
-    const next = new URLSearchParams(searchParams);
-    next.set("photoId", String(photoId));
-    setSearchParams(next);
-  }
+  const handleSelectPhoto = useCallback((photoId: number) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("photoId", String(photoId));
+      return next;
+    });
+  }, [setSearchParams]);
 
   const selectedRunDescription = selectedRun?.started_at
     ? `${selectedRun.mode === "evaluation" ? "Likely photos accepted during evaluation run" : "Accepted photos indexed during full run"} #${selectedRun.id}, started ${new Date(selectedRun.started_at).toLocaleString()}.`
